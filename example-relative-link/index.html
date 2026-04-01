@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relative Linking Example</title>
+    
+    <!-- Relative CSS link - works because styles.css is in the same directory -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>✅ Relative Linking Works!</h1>
+        <p>This HTML file links to <code>styles.css</code> using a relative path:</p>
+        <code class="code-block">&lt;link rel="stylesheet" href="styles.css"&gt;</code>
+        
+        <div class="card">
+            <h2>How it works:</h2>
+            <ul>
+                <li><strong>Same directory:</strong> <code>href="styles.css"</code></li>
+                <li><strong>Subdirectory:</strong> <code>href="css/styles.css"</code></li>
+                <li><strong>Parent directory:</strong> <code>href="../styles.css"</code></li>
+            </ul>
+        </div>
+        
+        <p class="note">To preview: Right-click this file → "Open with Live Server"</p>
+    </div>
+</body>
+</html>

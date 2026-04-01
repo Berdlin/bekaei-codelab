@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Announcements</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; background: #f6f7fb; color: #111827; }
+        .wrap { max-width: 760px; margin: 40px auto; padding: 20px; }
+        .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; }
+        h1 { margin: 0 0 14px; font-size: 24px; }
+        .muted { color: #6b7280; font-size: 14px; margin-bottom: 14px; }
+        label { display: block; font-weight: 600; margin: 10px 0 6px; }
+        input, textarea, button {
+            width: 100%; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; font-size: 14px;
+        }
+        textarea { min-height: 160px; resize: vertical; }
+        button { background: #2563eb; color: #fff; border: none; cursor: pointer; margin-top: 14px; font-weight: 600; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .error { color: #b91c1c; margin-top: 10px; }
+        .ok { color: #065f46; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="card">
+            <h1>Admin Announcements</h1>
+            <div class="muted" id="status">Checking admin access...</div>
+            <div id="form-wrap" style="display:none;">
+                <label for="subject">Subject</label>
+                <input id="subject" type="text" placeholder="Announcement subject">
+                <label for="message">Message</label>
+                <textarea id="message" placeholder="Write the announcement that will be emailed to all users"></textarea>
+                <button id="send-btn">Send to all users</button>
+                <div id="result"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        const SUPABASE_URL = "https://vgyvqjmtkiospnkxctts.supabase.co";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZneXZxam10a2lvc3Bua3hjdHRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcyNjk4ODUsImV4cCI6MjA4Mjg0NTg4NX0.IB9ohWQBqzZBCgjEr-rXW4YyKOkl3Hk313Kp1FPqsA0";
+        const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+            auth: {
+                persistSession: true,
+                autoRefreshToken: true,
+                detectSessionInUrl: true
+            }
+        });
+
+        async function resolveAccessToken() {
+            const tokenFromUrl = new URLSearchParams(window.location.search).get('token');
+            if (tokenFromUrl) return tokenFromUrl;
+
+            const hashParams = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+            const tokenFromHash = hashParams.get('access_token');
+            if (tokenFromHash) return tokenFromHash;
+
+            const fromStorage = await client.auth.getSession();
+            const existing = fromStorage && fromStorage.data ? fromStorage.data.session : null;
+            if (existing && existing.access_token) return existing.access_token;
+
+            const refreshed = await client.auth.refreshSession();
+            const refreshedSession = refreshed && refreshed.data ? refreshed.data.session : null;
+            if (refreshedSession && refreshedSession.access_token) return refreshedSession.access_token;
+            return '';
+        }
+
+        async function init() {
+            const statusEl = document.getElementById("status");
+            const formWrap = document.getElementById("form-wrap");
+
+            const bypassEmail = 'berkethabtamu2025@gmail.com';
+            
+            // Check if user is logged in with admin email
+            let currentUserEmail = '';
+            try {
+                const { data: { user } } = await client.auth.getUser();
+                if (user && user.email) {
+                    currentUserEmail = user.email.toLowerCase().trim();
+                }
+            } catch (e) { }
+            
+            // Also check URL param as fallback
+            if (!currentUserEmail) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const emailFromUrl = urlParams.get('email');
+                if (emailFromUrl) {
+                    currentUserEmail = emailFromUrl.toLowerCase().trim();
+                }
+            }
+            
+            // Check if this is the admin email
+            const isAdminEmail = currentUserEmail === bypassEmail.toLowerCase();
+            
+            if (isAdminEmail) {
+                statusEl.textContent = "Admin access verified. You can send announcements.";
+                formWrap.style.display = "";
+                
+                document.getElementById("send-btn").addEventListener("click", async function () {
+                    const subject = document.getElementById("subject").value.trim();
+                    const message = document.getElementById("message").value.trim();
+                    const resultEl = document.getElementById("result");
+                    if (!subject || !message) {
+                        resultEl.className = "error";
+                        resultEl.textContent = "Please provide both subject and message.";
+                        return;
+                    }
+
+                    this.disabled = true;
+                    resultEl.className = "";
+                    resultEl.textContent = "Sending...";
+
+                    const res = await fetch('/api/admin/send-announcement-bypass', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Admin-Email': bypassEmail
+                        },
+                        body: JSON.stringify({ subject, message })
+                    });
+                    const data = await res.json();
+                    this.disabled = false;
+
+                    if (!res.ok) {
+                        resultEl.className = "error";
+                        resultEl.textContent = data.error || "Failed to send announcement.";
+                        return;
+                    }
+                    resultEl.className = "ok";
+                    resultEl.textContent = "Announcement sent to " + data.sentTo + " users.";
+                    document.getElementById("message").value = "";
+                });
+                return;
+            }
+
+            // Not admin, check normal auth
+            const accessToken = await resolveAccessToken();
+            if (!accessToken) {
+                statusEl.innerHTML = 'You must login first from <a href="/">the app</a>.';
+                return;
+            }
+
+            const meRes = await fetch('/api/admin/me', {
+                headers: { Authorization: 'Bearer ' + accessToken }
+            });
+            const meData = await meRes.json();
+            if (!meRes.ok || !meData.isAdmin) {
+                statusEl.textContent = "Access denied. This page is admin-only.";
+                return;
+            }
+
+            statusEl.textContent = "Admin access verified. You can send announcements.";
+            formWrap.style.display = "";
+
+            document.getElementById("send-btn").addEventListener("click", async function () {
+                const subject = document.getElementById("subject").value.trim();
+                const message = document.getElementById("message").value.trim();
+                const resultEl = document.getElementById("result");
+                if (!subject || !message) {
+                    resultEl.className = "error";
+                    resultEl.textContent = "Please provide both subject and message.";
+                    return;
+                }
+
+                this.disabled = true;
+                resultEl.className = "";
+                resultEl.textContent = "Sending...";
+
+                const res = await fetch('/api/admin/send-announcement', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: 'Bearer ' + accessToken
+                    },
+                    body: JSON.stringify({ subject, message })
+                });
+                const data = await res.json();
+                this.disabled = false;
+
+                if (!res.ok) {
+                    resultEl.className = "error";
+                    resultEl.textContent = data.error || "Failed to send announcement.";
+                    return;
+                }
+                resultEl.className = "ok";
+                resultEl.textContent = "Announcement sent to " + data.sentTo + " users.";
+                document.getElementById("message").value = "";
+            });
+        }
+
+        init().catch(function (e) {
+            var statusEl = document.getElementById("status");
+            statusEl.textContent = "Error: " + e.message;
+        });
+    </script>
+</body>
+</html>

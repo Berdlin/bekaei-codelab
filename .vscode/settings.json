@@ -1,0 +1,6 @@
+{
+    "liveServer.settings.port": 5501,
+    "liveServer.settings.root": "/public",
+    "liveServer.settings.multiRootWorkspaceName": "bekaei-codelab",
+    "CodeGPT.apiKey": "OpenRouter"
+}

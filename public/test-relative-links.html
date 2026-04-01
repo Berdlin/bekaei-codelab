@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Relative Links</title>
+    
+    <!-- Relative CSS linking - works because style.css is in the same directory -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Inline test styles -->
+    <style>
+        .test-container {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            margin: 20px;
+            max-width: 600px;
+        }
+        
+        .test-title {
+            color: var(--primary);
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+        }
+        
+        .test-item {
+            padding: 10px;
+            margin: 10px 0;
+            background: rgba(14, 165, 233, 0.1);
+            border-radius: var(--radius-sm);
+            border-left: 3px solid var(--primary);
+        }
+        
+        .success {
+            color: var(--success);
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1 class="test-title">✅ Relative Linking Test</h1>
+        
+        <div class="test-item">
+            <span class="success">✓ CSS Relative Link:</span> 
+            <code>href="style.css"</code> - Loads CSS from same directory
+        </div>
+        
+        <div class="test-item">
+            <span class="success">✓ JS Relative Links:</span><br>
+            <code>src="config.js"</code><br>
+            <code>src="script.js"</code><br>
+            <code>src="community.js"</code>
+        </div>
+        
+        <div class="test-item">
+            <span class="success">✓ Image Relative Links:</span><br>
+            <code>src="bekaei.png"</code> (if in same directory)<br>
+            <code>src="../bekaei.png"</code> (if in parent directory)
+        </div>
+        
+        <div class="test-item">
+            <h3>Relative Path Examples:</h3>
+            <ul style="margin-left: 20px; color: var(--text-muted);">
+                <li><code>style.css</code> - Same directory</li>
+                <li><code>css/style.css</code> - Subdirectory</li>
+                <li><code>../style.css</code> - Parent directory</li>
+                <li><code>./style.css</code> - Explicit same directory</li>
+            </ul>
+        </div>
+        
+        <div class="test-item">
+            <h3>Your Current Setup:</h3>
+            <p style="color: var(--text-muted); line-height: 1.6;">
+                Your HTML file correctly uses relative links. The server serves static files from the 
+                <code>public</code> directory, so all files in that directory can reference each other 
+                using relative paths.
+            </p>
+        </div>
+    </div>
+
+    <!-- Test JavaScript loading -->
+    <script src="config.js"></script>
+    <script>
+        console.log('✅ Relative CSS link working!');
+        console.log('✅ Relative JS link working!');
+        console.log('Directory:', window.location.pathname);
+    </script>
+</body>
+</html>

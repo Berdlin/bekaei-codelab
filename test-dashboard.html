@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ccc;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .visible {
+            display: block !important;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Dashboard Visibility Test</h1>
+
+    <div class="test-section">
+        <h2>Current State</h2>
+        <p>Auth Screen: <span id="auth-status">Unknown</span></p>
+        <p>Dashboard Screen: <span id="dashboard-status">Unknown</span></p>
+        <p>Main App: <span id="app-status">Unknown</span></p>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Controls</h2>
+        <button onclick="testInitialState()">Test Initial State</button>
+        <button onclick="testLogin()">Test Login</button>
+        <button onclick="testLogout()">Test Logout</button>
+    </div>
+
+    <script>
+        function updateStatus() {
+            const authScreen = document.getElementById('auth-screen');
+            const dashboardScreen = document.getElementById('dashboard-screen');
+            const mainApp = document.getElementById('main-app');
+
+            document.getElementById('auth-status').textContent = authScreen ? (authScreen.classList.contains('hidden') ? 'Hidden' : 'Visible') : 'Not Found';
+            document.getElementById('dashboard-status').textContent = dashboardScreen ? (dashboardScreen.classList.contains('hidden') ? 'Hidden' : 'Visible') : 'Not Found';
+            document.getElementById('app-status').textContent = mainApp ? (mainApp.classList.contains('hidden') ? 'Hidden' : 'Visible') : 'Not Found';
+        }
+
+        function testInitialState() {
+            // Simulate initial state
+            const authScreen = document.getElementById('auth-screen');
+            const dashboardScreen = document.getElementById('dashboard-screen');
+            const mainApp = document.getElementById('main-app');
+
+            if (authScreen) authScreen.classList.remove('hidden');
+            if (dashboardScreen) dashboardScreen.classList.add('hidden');
+            if (mainApp) mainApp.classList.add('hidden');
+
+            updateStatus();
+        }
+
+        function testLogin() {
+            // Simulate login
+            const authScreen = document.getElementById('auth-screen');
+            const dashboardScreen = document.getElementById('dashboard-screen');
+            const mainApp = document.getElementById('main-app');
+
+            if (authScreen) authScreen.classList.add('hidden');
+            if (dashboardScreen) dashboardScreen.classList.remove('hidden');
+            if (mainApp) mainApp.classList.add('hidden');
+
+            updateStatus();
+        }
+
+        function testLogout() {
+            // Simulate logout
+            const authScreen = document.getElementById('auth-screen');
+            const dashboardScreen = document.getElementById('dashboard-screen');
+            const mainApp = document.getElementById('main-app');
+
+            if (authScreen) authScreen.classList.remove('hidden');
+            if (dashboardScreen) dashboardScreen.classList.add('hidden');
+            if (mainApp) mainApp.classList.add('hidden');
+
+            updateStatus();
+        }
+
+        // Load the actual Bekaei elements
+        window.addEventListener('DOMContentLoaded', function () {
+            // Create test elements that match Bekaei structure
+            const testAuth = document.createElement('div');
+            testAuth.id = 'auth-screen';
+            testAuth.className = 'hidden';
+
+            const testDashboard = document.createElement('div');
+            testDashboard.id = 'dashboard-screen';
+            testDashboard.className = 'hidden';
+
+            const testApp = document.createElement('div');
+            testApp.id = 'main-app';
+            testApp.className = 'hidden';
+
+            document.body.appendChild(testAuth);
+            document.body.appendChild(testDashboard);
+            document.body.appendChild(testApp);
+
+            updateStatus();
+        });
+    </script>
+</body>
+
+</html>

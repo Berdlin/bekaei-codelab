@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="app-base-url" content="">
+    <title>Bekaei-Codelab</title>
+    <meta name="description" content="The Ultimate Collaborative Code Editor - Optimized for low bandwidth">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <style>
+        /* System font stack - loads instantly */
+        body,
+        button,
+        input,
+        select,
+        textarea {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        }
+
+        code,
+        pre,
+        .editor-content {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        }
+
+        /* Critical CSS inlined for faster first paint */
+        .hidden {
+            display: none !important;
+        }
+
+        #loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: #ffffff;
+            /* Changed to white */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 99999;
+        }
+
+        .welcome-box {
+            text-align: center;
+            color: #0f172a;
+            /* Changed to dark text */
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e2e8f0;
+            /* Light gray border */
+            border-top-color: #0ea5e9;
+            /* Sky blue */
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+
+    <script>
+        const isLowBandwidth = () => {
+            const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            if (conn) { return conn.effectiveType === 'slow-2g' || conn.downlink < 0.5; }
+            return false;
+        };
+        window.BANDWIDTH_MODE = isLowBandwidth() ? 'low' : 'normal';
+        console.log('Bandwidth mode:', window.BANDWIDTH_MODE);
+    </script>
+</head>
+
+<body>
+    <div id="toast-container"></div>
+    <div id="rotate-overlay">
+        <div class="rotate-content">
+            <div class="phone-rotation">
+                <i class="fa-solid fa-mobile-screen"></i>
+                <div class="rotation-arrow"><i class="fa-solid fa-rotate-right"></i></div>
+            </div>
+            <h2>Please Rotate Your Device</h2>
+            <p>Bekaei IDE works best in landscape mode on mobile devices.</p>
+        </div>
+    </div>
+
+    <div id="demo-timer-overlay" class="hidden">
+        <div class="demo-timer-banner">
+            <i class="fa-solid fa-stopwatch"></i>
+            <span>Demo Mode - Time Remaining: </span>
+            <span id="demo-timer">1:00</span>
+            <span class="demo-warning">Your work will not be saved!</span>
+        </div>
+    </div>
+
+    <div id="offline-overlay" class="hidden">
+        <i class="fa-solid fa-wifi fa-3x" style="color:#ef4444;margin-bottom:20px;"></i>
+        <h2 style="color:#0f172a;margin-bottom:10px;">You are offline</h2>
+        <p style="color:#64748b;">Attempting to reconnect...</p>
+    </div>
+
+    <div id="loading-overlay">
+        <div class="welcome-box">
+            <div class="loading-spinner"></div>
+            <p>Loading Bekaei Environment...</p>
+        </div>
+    </div>
+
+    <div id="auth-screen">
+        <div class="auth-two-column">
+            <div class="auth-left-side">
+                <div class="auth-form-container glass-panel">
+                    <div class="auth-header-small">
+                        <div class="auth-logo">
+                            <i class="fa-solid fa-code"></i>
+                            <span>Bekaei <span class="logo-accent">Ultimate</span></span>
+                        </div>
+                    </div>
+                    <div class="auth-tabs">
+                        <button class="auth-tab active" id="tab-login-btn">Login</button>
+                        <button class="auth-tab" id="tab-register-btn">Register</button>
+                    </div>
+                    <div id="login-form">
+                        <input type="email" id="email-input" class="dark-input" placeholder="Email Address"
+                            title="Email">
+                        <div class="input-spacer"></div>
+                        <div class="password-wrapper">
+                            <input type="password" id="password-input" class="dark-input" placeholder="Password"
+                                title="Password">
+                            <i class="fa-solid fa-eye" id="toggle-pass-login"></i>
+                        </div>
+                        <div class="input-spacer"></div>
+                        <button class="action-btn full-width" id="login-btn"><i class="fa-solid fa-sign-in-alt"></i>
+                            Login</button>
+                    </div>
+                    <div id="register-form" class="hidden">
+                        <input type="text" id="username-input" class="dark-input" placeholder="Username"
+                            title="Username">
+                        <div class="input-spacer"></div>
+                        <input type="email" id="reg-email-input" class="dark-input" placeholder="Email Address"
+                            title="Email">
+                        <div class="input-spacer"></div>
+                        <div class="password-wrapper">
+                            <input type="password" id="reg-password-input" class="dark-input" placeholder="Password"
+                                title="Password">
+                            <i class="fa-solid fa-eye" id="toggle-pass-reg"></i>
+                        </div>
+                        <div class="input-spacer"></div>
+                        <button class="action-btn full-width" id="register-btn"><i class="fa-solid fa-user-plus"></i>
+                            Create Account</button>
+                    </div>
+                    <div class="divider"><span>Continue</span></div>
+                </div>
+            </div>
+            <div class="auth-right-side">
+                <div class="auth-content-scroll">
+                    <div class="auth-header">
+                        <div class="auth-logo-large">
+                            <i class="fa-solid fa-code"></i>
+                            <span>Bekaei <span class="logo-accent">Ultimate</span></span>
+                        </div>
+                        <p class="auth-tagline">The Ultimate Collaborative Code Editor</p>
+                    </div>
+                    <div class="demo-preview-section">
+                        <div class="demo-badge" id="demo-btn">
+                            <i class="fa-solid fa-play"></i>
+                            Try Demo (1 min)
+                        </div>
+                        <div class="demo-preview" id="demo-preview-box">
+                            <div class="demo-preview-header">
+                                <div class="browser-controls-pc">
+                                    <span class="control-minimize">_</span>
+                                    <span class="control-maximize">□</span>
+                                    <span class="control-close">×</span>
+                                </div>
+                                <span class="demo-title">demo.html</span>
+                            </div>
+                            <div class="demo-preview-content">
+                                <div class="demo-line"><span class="demo-tag">
+                                        &lt;</span><span class="demo-tag">div</span><span class="demo-attr">
+                                        class</span>=<span class="demo-value">"container"</span><span
+                                        class="demo-tag">&gt;</span>
+                                </div>
+                                <div class="demo-line demo-indent"><span class="demo-tag">
+                                        &lt;</span><span class="demo-tag">h1</span><span
+                                        class="demo-tag">&gt;</span><span class="demo-text">Welcome to
+                                        Bekaei!</span><span class="demo-tag">&lt;/</span><span
+                                        class="demo-tag">h1</span><span class="demo-tag">&gt;</span></div>
+                                <div class="demo-line demo-indent"><span class="demo-tag">
+                                        &lt;</span><span class="demo-tag">p</span><span
+                                        class="demo-tag">&gt;</span><span class="demo-text">The Ultimate Code
+                                        Editor</span><span class="demo-tag">
+                                        &lt;/</span><span class="demo-tag">p</span><span class="demo-tag">&gt;</span>
+                                </div>
+                                <div class="demo-line"><span class="demo-tag">&lt;/</span><span
+                                        class="demo-tag">div</span><span class="demo-tag">&gt;</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="features-grid">
+                        <div class="feature-item"><i class="fa-solid fa-code"></i><span>Multi-Language</span></div>
+                        <div class="feature-item"><i class="fa-solid fa-users"></i><span>Collaboration</span></div>
+                        <div class="feature-item"><i class="fa-solid fa-bolt"></i><span>Instant Preview</span></div>
+                        <div class="feature-item"><i class="fa-solid fa-cloud"></i><span>Cloud Sync</span></div>
+                    </div>
+                    <div class="creator-info">
+                        <div class="creator-badge">
+                            <i class="fa-solid fa-crown"></i>
+                            <span>Created by <strong style="color: #0ea5e9;">beka_ei</strong></span>
+                        </div>
+                        <div class="social-links">
+                            <a href="https://youtube.com/@beka_ei" target="_blank" rel="noopener noreferrer"
+                                class="social-link youtube"><i
+                                    class="fa-brands fa-youtube"></i><span>@beka_ei</span></a>
+                            <a href="https://instagram.com/beka_ei" target="_blank" rel="noopener noreferrer"
+                                class="social-link instagram"><i
+                                    class="fa-brands fa-instagram"></i><span>@beka_ei</span></a>
+                            <a href="https://t.me/beka_ei" rel="noopener noreferrer" target="_blank"
+                                class="social-link telegram"><i
+                                    class="fa-brands fa-telegram"></i><span>@beka_ei</span></a>
+                        </div>
+                    </div>
+                    <div class="demo-signup-prompt">
+                        <span><i class="fa-solid fa-star"></i> Want more features? </span>
+                        <a href="#" id="signup-link">Sign up for free</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="dashboard-screen" class="hidden">
+        <aside id="sidebar-dashboard" class="hidden">
+            <div class="sidebar-header">
+                <div class="sidebar-logo">
+                    <i class="fa-solid fa-grid-2"></i>
+                    <span>Bekaei <span style="color:var(--primary)">Dashboard</span></span>
+                </div>
+                <div class="user-info">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div class="sidebar-avatar-wrap" style="width:36px;height:36px;border-radius:50%;overflow:hidden;background:var(--primary);display:flex;align-items:center;justify-content:center;">
+                            <img id="sidebar-avatar-img" alt="avatar" style="width:100%;height:100%;object-fit:cover;display:none;" />
+                            <span id="sidebar-avatar-initial" style="color:white;font-weight:600;font-size:14px;"></span>
+                        </div>
+                        <div id="sidebar-username" style="cursor:default;">Guest</div>
+                    </div>
+                    <div class="user-actions"></div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <h4>Navigation</h4>
+                    <div class="nav-items">
+                        <div class="nav-item active" data-tab="projects" title="Project Management">
+                            <i class="fa-solid fa-diagram-project"></i>
+                            <span>Project Management</span>
+                        </div>
+                        <div class="nav-item" data-tab="friends" title="Friends">
+                            <i class="fa-solid fa-user-group"></i>
+                            <span>Friends</span>
+                        </div>
+                        <div class="nav-item" data-tab="profile" title="Profile">
+                            <i class="fa-solid fa-user"></i>
+                            <span>Profile</span>
+                        </div>
+                        <div class="nav-item" data-tab="help" title="Help">
+                            <i class="fa-solid fa-circle-question"></i>
+                            <span>Help</span>
+                        </div>
+                        <div class="nav-item" data-tab="community" title="Community">
+                            <i class="fa-solid fa-users"></i>
+                            <span>Community</span>
+                        </div>
+                        <div class="nav-item" data-tab="settings" title="Settings">
+                            <i class="fa-solid fa-gear"></i>
+                            <span>Settings</span>
+                        </div>
+                        <div class="nav-item hidden" id="admin-announcements-nav-item" title="Admin Announcements">
+                            <i class="fa-solid fa-bullhorn"></i>
+                            <span>Admin Announcements</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="nav-section nav-section-account">
+                    <h4>Account</h4>
+                    <div class="nav-items">
+                        <div class="nav-item danger-item" id="logout-nav-item" title="Logout">
+                            <i class="fa-solid fa-right-from-bracket"></i>
+                            <span>Logout</span>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+        </aside>
+
+        <div class="dashboard-content">
+            <button id="dashboard-sidebar-toggle-btn" class="action-btn icon-only dashboard-sidebar-toggle-btn"
+                onclick="toggleDashboardSidebar()" title="Dashboard menu">
+                <i class="fa-solid fa-bars"></i>
+            </button>
+            <div class="dashboard-tab active" id="projects-tab">
+                <div class="dash-header">
+                    <div>
+                        <h2>My Projects</h2>
+                        <p style="color:#64748b;margin-top:5px;">To see your project</p>
+                    </div>
+                    <div class="dash-actions" style="display:flex;gap:12px;flex-wrap:wrap;">
+                        <input type="text" id="join-room-id-input" class="dark-input" placeholder="Project ID..."
+                            style="width:160px;" title="Project ID">
+                        <input type="email" id="join-owner-email-input" class="dark-input" placeholder="Owner Gmail (optional)..."
+                            style="width:220px;" title="Owner Gmail (optional)">
+                        <button class="action-btn secondary" onclick="joinRoomViaId()">Join</button>
+                        <button class="action-btn" onclick="openModal('create-project-modal')"><i
+                                class="fa-solid fa-plus"></i> New Project</button>
+                    </div>
+                </div>
+                <div id="projects-grid" class="projects-grid"></div>
+            </div>
+
+            <div class="dashboard-tab" id="friends-tab">
+                <div class="friends-content">
+                    <div class="friends-grid">
+                        <div class="friends-left">
+                            <div class="friends-card">
+                                <h3>Send friend request</h3>
+                                <label>Friend Gmail</label>
+                                <input id="friends-email-input" type="email" class="dark-input"
+                                    placeholder="name@gmail.com">
+                                <button class="action-btn" id="friends-send-request-btn" style="margin-top:12px;">
+                                    <i class="fa-solid fa-user-plus"></i> Send Request
+                                </button>
+                            </div>
+
+                            <div class="friends-card">
+                                <h3>Incoming requests</h3>
+                                <div id="friends-incoming-requests-list" class="friends-list"></div>
+                            </div>
+
+                            <div class="friends-card">
+                                <h3>Friends</h3>
+                                <div id="friends-accepted-list" class="friends-list"></div>
+                            </div>
+                        </div>
+
+                        <div class="friends-right">
+                            <div class="friends-chat-card">
+                                <div class="friends-chat-header">
+                                    <div>
+                                        <h3 id="friends-chat-title" style="margin:0;">Chat with friends</h3>
+                                        <div id="friends-chat-subtitle" style="color:var(--text-muted); font-size:0.9rem; margin-top:4px;">
+                                            Select a friend to start chatting.
+                                        </div>
+                                    </div>
+                                    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+                                        <button class="action-btn secondary" type="button"
+                                            onclick="openFriendsClearChatModal()"
+                                            title="Delete all chat">
+                                            <i class="fa-solid fa-trash"></i> Delete chat
+                                        </button>
+                                        <button class="action-btn secondary" type="button" onclick="refreshFriendsDashboard()" title="Refresh Friends">
+                                            <i class="fa-solid fa-rotate"></i> Refresh
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div id="friends-chat-messages" class="friends-chat-messages"></div>
+
+                                <div class="chat-input-area" style="padding:12px 15px;">
+                                    <input type="text" id="friends-chat-input" class="dark-input"
+                                        placeholder="Type a message..."
+                                        onkeypress="handleFriendsChatInput(event)" title="Message">
+                                    <button class="action-btn icon-only" id="friends-chat-send-btn" title="Send">
+                                        <i class="fa-solid fa-paper-plane"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-tab" id="profile-tab">
+                <div class="profile-card">
+                    <div class="profile-header">
+                        <div class="avatar-section">
+                            <div class="profile-avatar-wrap">
+                                <img id="profile-avatar-preview" alt="avatar" class="profile-avatar hidden" />
+                                <div id="profile-avatar-initial" class="profile-avatar-initial">A</div>
+                            </div>
+                            <div>
+                                <div id="profile-avatar-uploader" class="profile-avatar-uploader hidden">
+                                    <div id="profile-avatar-dropzone" class="profile-avatar-dropzone">
+                                        Drag & drop an image here
+                                        <div style="color:var(--text-muted);font-size:0.85rem;margin-top:6px;">or click to select</div>
+                                    </div>
+                                    <input type="file" id="profile-avatar-input" accept="image/*" class="hidden">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="profile-basic-info" style="flex:1;min-width:240px;">
+                            <h3 id="profile-display-name">Username</h3>
+                            <label style="margin-top:10px;display:block;">Email (Gmail)</label>
+                            <input type="text" id="profile-email-display" class="dark-input" disabled>
+                            <label style="margin-top:12px;display:block;">Username</label>
+                            <input type="text" id="profile-username-input" class="dark-input" placeholder="Username">
+                            <div class="profile-actions" style="margin-top:16px;">
+                                <button class="action-btn" id="save-profile-btn"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                                <button class="action-btn secondary" type="button" id="profile-avatar-change-btn"
+                                    style="margin-top:10px;">
+                                    <i class="fa-solid fa-pen"></i> Change
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="profile-stats" style="grid-template-columns: 1fr; margin-top:10px;">
+                        <div class="stat-item" style="text-align:left;">
+                            <span class="stat-label">Strict management</span>
+                            <div style="margin-top:8px;color:var(--text-muted);font-size:0.9rem;line-height:1.6;">
+                                Delete account permanently. You must confirm by typing your gmail or your password.
+                            </div>
+                            <div style="margin-top:14px;">
+                                <button class="action-btn" id="delete-account-btn"
+                                    style="background:#ef4444;border-color:#ef4444;">
+                                    <i class="fa-solid fa-trash"></i> Delete Account
+                                </button>
+                            </div>
+                            <div style="margin-top:14px;">
+                                <div style="margin-top:8px;color:var(--text-muted);font-size:0.9rem;line-height:1.6;">
+                                    Use the Help tab in the sidebar to contact admin support.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-tab" id="help-tab">
+                <div class="profile-card">
+                    <h3 style="margin-bottom:12px;">Help & Support</h3>
+                    <div style="color:var(--text-muted);font-size:0.95rem;line-height:1.6;margin-bottom:12px;">
+                        Send your help request directly to admin at <strong>berekethabtamu2025@gmail.com</strong>.
+                    </div>
+                    <input type="text" id="help-subject-input" class="dark-input" placeholder="Help subject">
+                    <textarea id="help-message-input" class="dark-input" placeholder="Describe your issue..."
+                        style="margin-top:10px;height:120px;resize:vertical;padding:8px;"></textarea>
+                    <button class="action-btn" id="send-help-btn" style="margin-top:10px;">
+                        <i class="fa-solid fa-paper-plane"></i> Send Help Request
+                    </button>
+                </div>
+            </div>
+
+            <div class="dashboard-tab" id="community-tab">
+                <div class="community-container">
+                    <div class="community-header">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                            <h2 style="margin:0;"><i class="fa-solid fa-users"></i> Community</h2>
+                            <button class="action-btn secondary" type="button"
+                                onclick="window.community && window.community.refresh ? window.community.refresh() : void 0"
+                                title="Refresh Community">
+                                <i class="fa-solid fa-rotate"></i> Refresh
+                            </button>
+                        </div>
+                        <p>Share your thoughts and connect with others</p>
+                    </div>
+                    
+                    <!-- Create Post Section -->
+                    <div class="community-create-post">
+                        <div class="create-post-header">
+                            <i class="fa-solid fa-pen-to-square"></i>
+                            <span>Create a post</span>
+                        </div>
+                        <div class="post-input-wrapper">
+                            <textarea 
+                                id="community-post-input" 
+                                class="dark-input post-textarea" 
+                                placeholder="What's on your mind? Share with the community..."
+                                rows="3"
+                            ></textarea>
+                            <button class="post-attach-btn" onclick="document.getElementById('community-file-input').click()" title="Attach file">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                            <input type="file" id="community-file-input" class="hidden" accept="image/*,video/*,.pdf,.doc,.docx,.txt" onchange="window.community.handleFileSelect(this)">
+                        </div>
+                        <div id="community-attachment-preview" class="attachment-preview hidden"></div>
+                        <div class="create-post-actions">
+                            <button id="community-create-post-btn" class="action-btn">
+                                <i class="fa-solid fa-paper-plane"></i> Post
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Posts Feed -->
+                    <div id="community-loader" class="community-loader" style="display:none;">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Loading posts...
+                    </div>
+                    <div id="community-posts-feed" class="community-posts-feed">
+                        <!-- Posts will be rendered here -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-tab" id="settings-tab">
+                <div class="profile-card">
+                    <h3 style="margin-bottom:12px;"><i class="fa-solid fa-gear"></i> Settings</h3>
+                    <p style="color:var(--text-muted);font-size:0.95rem;line-height:1.6;margin-bottom:20px;">
+                        Manage your AI API keys securely. Your keys are encrypted and only accessible by you.
+                    </p>
+
+                    <!-- Add New API Key Section -->
+                    <div class="api-key-section">
+                        <h4>Add New API Key</h4>
+                        <div class="api-key-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Provider</label>
+                                    <select id="api-key-provider" class="dark-input">
+                                        <option value="openai">OpenAI</option>
+                                        <option value="anthropic">Anthropic</option>
+                                        <option value="google">Google</option>
+                                        <option value="openrouter">OpenRouter</option>
+                                        <option value="groq">Groq</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Label (Optional)</label>
+                                    <input type="text" id="api-key-label" class="dark-input" placeholder="e.g. Production Key">
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-top:12px;">
+                                <label>API Key</label>
+                                <div class="password-wrapper">
+                                    <input type="password" id="api-key-input" class="dark-input" placeholder="Enter your API key">
+                                    <i class="fa-solid fa-eye" id="toggle-api-key" onclick="togglePasswordVisibility('api-key-input', 'toggle-api-key')"></i>
+                                </div>
+                            </div>
+                            <button class="action-btn" id="save-api-key-btn" style="margin-top:16px;" onclick="saveApiKey()">
+                                <i class="fa-solid fa-floppy-disk"></i> Save API Key
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Saved API Keys Section -->
+                    <div class="api-key-section" style="margin-top:30px;">
+                        <h4>Saved API Keys</h4>
+                        <div id="api-keys-list" class="api-keys-list">
+                            <p style="color:var(--text-muted);padding:20px;text-align:center;">No API keys saved yet.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-app" class="hidden">
+        <aside class="activity-bar">
+            <div>
+                <div class="icon active" onclick="togglePanel('explorer')" title="Explorer"><i
+                        class="fa-regular fa-folder"></i></div>
+                <div class="icon" onclick="openModal('new-file-modal')" title="Create File"><i
+                        class="fa-solid fa-plus"></i></div>
+                <div class="icon" onclick="togglePanel('users')" title="Online Users"><i class="fa-solid fa-users"></i>
+                </div>
+                <div class="icon" onclick="togglePanel('chat')" title="Team Chat"><i class="fa-regular fa-comments"></i>
+                    <div id="chat-badge" class="badge hidden"></div>
+                </div>
+                <div class="icon" onclick="togglePanel('ai')" title="AI Assistant"><i class="fa-solid fa-robot"></i>
+                </div>
+            </div>
+            <div>
+                <div class="icon" onclick="openSettings()" title="Settings"><i class="fa-solid fa-gear"></i></div>
+                <div class="icon" onclick="returnToDashboard()" title="Back"><i class="fa-solid fa-arrow-left"></i>
+                </div>
+            </div>
+        </aside>
+        <div class="panels-container">
+            <div class="sidebar-panel" id="panel-explorer">
+                <div class="panel-header">
+                    <span>Explorer</span>
+                    <div style="cursor:pointer;padding:4px;" onclick="openModal('new-file-modal')"><i
+                            class="fa-solid fa-plus"></i></div>
+                </div>
+                <div class="file-list" id="file-list-container"></div>
+            </div>
+            <div class="sidebar-panel hidden" id="panel-users">
+                <div class="panel-header">Online Users (<span id="online-count">0</span>)</div>
+                <div class="file-list" id="online-users-list"></div>
+            </div>
+            <div class="sidebar-panel hidden" id="panel-chat">
+                <div class="panel-header">Team Chat</div>
+                <div id="team-chat-area" style="flex:1;overflow-y:auto;padding:15px;"></div>
+                <div class="chat-input-area">
+                    <input type="text" id="team-chat-input" class="dark-input" placeholder="Type a message..."
+                        onkeypress="handleChatInput(event)" title="Message">
+                    <button class="action-btn icon-only" onclick="sendChatMessage()" title="Send"><i
+                            class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+            <div class="sidebar-panel hidden" id="panel-ai">
+                <div class="panel-header">AI Assistant <button class="action-btn text-only" onclick="toggleAIConfig()"
+                        title="Settings"><i class="fa-solid fa-gear"></i></button></div>
+                <div id="ai-config"
+                    style="padding:10px;display:none;background:rgba(0,0,0,0.03);margin:5px;border-radius:8px;">
+                    <label style="font-size:11px;color:#64748b;">AI Mode:</label>
+                    <select id="ai-mode" class="dark-input" style="margin-top:3px;margin-bottom:8px;"
+                        onchange="toggleAIMode()">
+                        <option value="chat">Chat</option>
+                        <option value="auto">Auto Act (Implement in file)</option>
+                        <option value="fix">Fix (Repair specific line)</option>
+                        <option value="thinking">Thinking Mode (Deep Analysis)</option>
+                    </select>
+                    <label style="font-size:11px;color:#64748b;">API Provider:</label>
+                    <select id="ai-provider" class="dark-input" style="margin-top:3px;margin-bottom:8px;"
+                        onchange="updateAIModels()">
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="groq">Groq</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="google">Google</option>
+                    </select>
+                    <label style="font-size:11px;color:#64748b;">Model:</label>
+                    <select id="ai-model-select" class="dark-input" style="margin-top:3px;margin-bottom:8px;">
+                        <option value="openai/gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                        <option value="anthropic/claude-3-haiku">Claude 3 Haiku</option>
+                        <option value="anthropic/claude-3-sonnet">Claude 3 Sonnet</option>
+                        <option value="google/gemini-2.0-flash">Gemini 2.0 Flash</option>
+                    </select>
+                </div>
+                <div id="ai-chat-area" style="flex:1;overflow-y:auto;padding:15px;"></div>
+                <div id="ai-fix-controls" class="ai-fix-controls hidden">
+                    <div class="ai-fix-row">
+                        <select id="ai-fix-file-select" class="dark-input" title="File to fix"></select>
+                        <input type="number" id="ai-fix-from-line" class="dark-input" min="1" placeholder="From line" title="From line">
+                        <input type="number" id="ai-fix-to-line" class="dark-input" min="1" placeholder="To line" title="To line">
+                    </div>
+                    <input type="text" id="ai-fix-instruction" class="dark-input" placeholder="Fix instruction (e.g. make this function async)" title="Fix instruction">
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="ai-chat-input" class="dark-input" placeholder="Ask AI anything..."
+                        onkeypress="handleAIInput(event)" title="Ask AI" style="flex:1;">
+                    <button class="action-btn icon-only" onclick="sendAIMessage()" title="Send"><i
+                            class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+        <main class="editor-area">
+            <div class="editor-tabs" id="file-tabs"></div>
+            <div class="editor-toolbar">
+                <div class="breadcrumbs">
+                    <i class="fa-regular fa-file-code" style="color:#64748b;margin-right:5px;"></i>
+                    <span id="breadcrumbs">No file selected</span>
+                    <span id="save-status" class="saved"><i class="fa-solid fa-check"></i> Saved</span>
+                </div>
+                <div class="toolbar-actions">
+                    <button onclick="executeCode()" title="Run Code" class="run-btn"><i class="fa-solid fa-play"></i>
+                        Run</button>
+                    <button onclick="switchBottomTab('terminal')" title="Terminal" class="action-btn icon-only"><i
+                            class="fa-solid fa-terminal"></i></button>
+                    <button onclick="exportCurrentFile()" title="Export File" class="action-btn icon-only"><i
+                            class="fa-solid fa-download"></i></button>
+                </div>
+            </div>
+            <div id="monaco-editor"></div>
+            <div class="bottom-panel" id="bottom-panel">
+                <div class="browser-header">
+                    <div class="browser-controls-pc">
+                        <span class="control-close" onclick="closeTerminal()" title="Close"></span>
+                        <span class="control-minimize" onclick="minimizeTerminal()" title="Half"></span>
+                        <span class="control-maximize" onclick="maximizeTerminal()" title="Full"></span>
+                    </div>
+                    <div class="browser-tabs">
+                        <div class="browser-tab active" id="tab-terminal" onclick="switchBottomTab('terminal')"><i
+                                class="fa-solid fa-terminal"></i> Terminal</div>
+                        <div class="browser-tab" id="tab-browser" onclick="switchBottomTab('browser')"><i
+                                class="fa-solid fa-globe"></i> Browser</div>
+                    </div>
+                    <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
+                        <span id="panel-status" style="font-size:11px;color:#64748b;"></span>
+                        <button class="action-btn text-only" onclick="clearTerminal()">Clear</button>
+                    </div>
+                </div>
+                <div id="terminal-output" class="terminal-content">
+                    <div id="terminal-input-line">
+                        <span style="color:#22c55e;">$ </span>
+                        <input type="text" id="terminal-input" class="terminal-input" placeholder="Type command..."
+                            onkeypress="handleTerminalInput(event)" title="Command">
+                    </div>
+                    <div id="terminal-logs" style="margin-top:10px;"></div>
+                </div>
+                <div id="browser-content" class="browser-content hidden">
+                    <div class="browser-url-bar">
+                        <i class="fa-solid fa-lock" style="color:#22c55e;font-size:10px;"></i>
+                        <input type="text" id="browser-url" class="browser-url-input" value="index.html" readonly
+                            title="URL">
+                    </div>
+                    <iframe id="browser-preview" class="browser-frame"></iframe>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="create-project-modal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Create Project</h3>
+            <input type="text" id="new-room-id" class="dark-input" placeholder="Project Name (ID)" title="Project Name">
+            <div style="margin-top:10px;display:flex;gap:12px;align-items:center;">
+                <label style="font-size:13px;color:#64748b;"><input type="radio" name="proj-type" value="public" checked
+                        style="margin-right:6px;"> Public</label>
+                <label style="font-size:13px;color:#64748b;"><input type="radio" name="proj-type" value="private"
+                        style="margin-right:6px;"> Private</label>
+            </div>
+            <textarea id="new-room-desc" class="dark-input" placeholder="Description (optional)" title="Description"
+                style="margin-top:10px;height:80px;resize:vertical;padding:8px;"></textarea>
+            <input type="password" id="new-room-pass" class="dark-input" placeholder="Password (required for private)"
+                title="Project Password" style="margin-top:8px;">
+            <div class="modal-actions">
+                <button class="action-btn secondary" onclick="closeModal('create-project-modal')">Cancel</button>
+                <button class="action-btn" onclick="createRoom()">Create Project</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="new-file-modal" class="modal hidden">
+        <div class="modal-box">
+            <h3>New File</h3>
+            
+            <!-- Drag and Drop Area -->
+            <div id="file-dropzone" class="file-dropzone">
+                <div class="dropzone-content">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <p class="dropzone-title">Drop files here or click to upload</p>
+                    <p class="dropzone-subtitle">You can also create a new file below</p>
+                </div>
+                <input type="file" id="file-drop-input" multiple class="hidden">
+            </div>
+            
+            <div class="modal-divider">
+                <span>OR</span>
+            </div>
+            
+            <!-- Create New File Section -->
+            <div class="create-file-section">
+                <label class="input-label">Create a new file</label>
+                <input type="text" id="new-filename" class="dark-input" placeholder="e.g. script.js" title="File Name">
+            </div>
+            
+            <div class="modal-actions">
+                <button class="action-btn secondary" onclick="closeModal('new-file-modal')">Cancel</button>
+                <button class="action-btn" onclick="createNewFile()">Create File</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="room-password-modal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Enter Project Password</h3>
+            <div style="margin-bottom:10px;color:#64748b;font-size:12px;">This is a private project. Please enter the
+                password to join.</div>
+            <input type="text" id="room-project-id-input" class="dark-input" placeholder="Project ID" readonly
+                title="Project ID">
+            <div style="margin-top:10px;"></div>
+            <input type="password" id="room-password-input" class="dark-input" placeholder="Password" title="Password">
+            <div class="modal-actions">
+                <button class="action-btn secondary" onclick="closeRoomPasswordModal()">Cancel</button>
+                <button class="action-btn" onclick="submitRoomPassword()">Join Project</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="delete-confirm-modal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Confirm Project Deletion</h3>
+            <div style="margin-bottom:10px;color:#64748b;font-size:13px;">This action cannot be undone. To confirm, type
+                the project name below and click <strong>Delete</strong>.</div>
+            <div style="margin-bottom:12px;"><strong id="delete-confirm-project-name"
+                    style="font-family:monospace;color:var(--primary)"></strong></div>
+            <input type="text" id="delete-confirm-input" class="dark-input" placeholder="Type project name to confirm"
+                title="Confirm Project Name">
+            <div class="modal-actions">
+                <button class="action-btn secondary" id="delete-confirm-cancel">Cancel</button>
+                <button class="action-btn" id="delete-confirm-btn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-box settings-full">
+            <h3>Settings</h3>
+            <div class="settings-grid">
+                <div class="settings-section">
+                    <h4>Editor</h4>
+                    <label>Theme</label>
+                    <select id="set-theme" class="dark-input">
+                        <option value="vs-dark">Dark</option>
+                        <option value="vs">Light</option>
+                        <option value="hc-black">High Contrast</option>
+                    </select>
+                    <label>Font Size</label>
+                    <input type="number" id="set-fontSize" class="dark-input" min="10" max="24" value="14">
+                    <label>Line Height</label>
+                    <input type="number" id="set-lineHeight" class="dark-input" min="16" max="32" value="20">
+                    <label>Tab Size</label>
+                    <input type="number" id="set-tabSize" class="dark-input" min="2" max="8" value="4">
+                    <label>Word Wrap</label>
+                    <select id="set-wordWrap" class="dark-input">
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                        <option value="wordWrapColumn">Column</option>
+                    </select>
+                    <label>Line Numbers</label>
+                    <select id="set-lineNumbers" class="dark-input">
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                        <option value="relative">Relative</option>
+                    </select>
+                </div>
+                <div class="settings-section">
+                    <h4>Behavior</h4>
+                    <label>Auto Save</label>
+                    <select id="set-autoSave" class="dark-input">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                    </select>
+                    <label>Auto Format</label>
+                    <select id="set-autoFormat" class="dark-input">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                    </select>
+                    <label>Minimap</label>
+                    <select id="set-minimap" class="dark-input">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                    </select>
+                    <label>Smooth Scrolling</label>
+                    <select id="set-smoothScrolling" class="dark-input">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                    </select>
+                </div>
+                <div class="settings-section">
+                    <h4>Execution</h4>
+                    <label>Execution Mode</label>
+                    <select id="set-executionMode" class="dark-input">
+                        <option value="auto">Auto</option>
+                        <option value="client">Client Only</option>
+                        <option value="server">Server Only</option>
+                    </select>
+                    <label>Timeout (ms)</label>
+                    <input type="number" id="set-timeout" class="dark-input" min="1000" max="60000" value="30000">
+                    <label>Max Output Lines</label>
+                    <input type="number" id="set-maxOutputLines" class="dark-input" min="100" max="10000" value="1000">
+                </div>
+                <div class="settings-section">
+                    <h4>Appearance</h4>
+                    <label>Font Family</label>
+                    <input type="text" id="set-fontFamily" class="dark-input"
+                        value="Consolas, Monaco, 'Courier New', monospace">
+                    <label>Auto Hide Sidebar</label>
+                    <select id="set-sidebarAutoHide" class="dark-input">
+                        <option value="false">Disabled</option>
+                        <option value="true">Enabled</option>
+                    </select>
+                    <label>Panel Width</label>
+                    <input type="range" id="set-panelWidth" class="dark-input" min="200" max="500" value="250">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="action-btn secondary" onclick="closeModal('settings-modal')">Cancel</button>
+                <button class="action-btn" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Account Delete Modal (strict confirmation) -->
+    <div id="account-delete-modal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Delete Account</h3>
+            <div style="color:var(--text-muted);font-size:0.95rem;line-height:1.6;margin-bottom:14px;">
+                Confirm deletion by typing your gmail OR your password below. This cannot be undone.
+            </div>
+
+            <label style="display:block;margin-top:10px;">Your Gmail</label>
+            <input type="text" id="account-delete-email-input" class="dark-input" placeholder="Type your gmail">
+
+            <label style="display:block;margin-top:10px;">Your Password</label>
+            <input type="password" id="account-delete-password-input" class="dark-input" placeholder="Type your password">
+
+            <div class="modal-actions">
+                <button class="action-btn secondary" id="account-delete-cancel-btn">Cancel</button>
+                <button class="action-btn" id="account-delete-confirm-btn"
+                    style="background:#ef4444;border-color:#ef4444;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Delete
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Friends: Clear chat modal -->
+    <div id="friends-clear-chat-modal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Delete chat</h3>
+            <div style="color:var(--text-muted);font-size:0.95rem;line-height:1.6;margin-bottom:14px;">
+                Choose how you want to delete this conversation.
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                <button class="action-btn secondary" type="button" onclick="confirmFriendsClearChat('me')">
+                    Delete only for me
+                </button>
+                <button class="action-btn" type="button" onclick="confirmFriendsClearChat('both')"
+                    style="background:#ef4444;border-color:#ef4444;">
+                    Delete for both of us
+                </button>
+            </div>
+
+            <div class="modal-actions" style="margin-top:14px;">
+                <button class="action-btn secondary" type="button" onclick="closeModal('friends-clear-chat-modal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="config.js"></script>
+    <script src="supabase-client.js"></script>
+    <script src="community.js"></script>
+    <script src="script.js"></script>
+
+    <script>
+        // Initialize event listeners when DOM is ready
+        document.addEventListener('DOMContentLoaded', function () {
+            var loginTabBtn = document.getElementById('tab-login-btn');
+            var registerTabBtn = document.getElementById('tab-register-btn');
+
+            // Demo button
+            var demoBtn = document.getElementById('demo-btn');
+            if (demoBtn) {
+                demoBtn.addEventListener('click', function () {
+                    console.log('Demo button clicked');
+                    if (typeof window.startDemo === 'function') {
+                        console.log('Calling startDemo function');
+                        window.startDemo();
+                    } else {
+                        console.error('startDemo function not found');
+                        alert('Demo function not available yet. Please wait a moment and try again.');
+                    }
+                });
+            }
+
+            // Eye toggle for login password
+            var togglePassLogin = document.getElementById('toggle-pass-login');
+            if (togglePassLogin) {
+                togglePassLogin.style.cursor = 'pointer';
+                togglePassLogin.addEventListener('click', function () {
+                    var input = document.getElementById('password-input');
+                    if (input.type === 'password') {
+                        input.type = 'text';
+                        this.classList.remove('fa-eye');
+                        this.classList.add('fa-eye-slash');
+                    } else {
+                        input.type = 'password';
+                        this.classList.remove('fa-eye-slash');
+                        this.classList.add('fa-eye');
+                    }
+                });
+            }
+
+            // Eye toggle for register password
+            var togglePassReg = document.getElementById('toggle-pass-reg');
+            if (togglePassReg) {
+                togglePassReg.style.cursor = 'pointer';
+                togglePassReg.addEventListener('click', function () {
+                    var input = document.getElementById('reg-password-input');
+                    if (input.type === 'password') {
+                        input.type = 'text';
+                        this.classList.remove('fa-eye');
+                        this.classList.add('fa-eye-slash');
+                    } else {
+                        input.type = 'password';
+                        this.classList.remove('fa-eye-slash');
+                        this.classList.add('fa-eye');
+                    }
+                });
+            }
+
+            // Login button
+            var loginBtn = document.getElementById('login-btn');
+            if (loginBtn) {
+                loginBtn.addEventListener('click', function () {
+                    console.log('Login button clicked');
+                    if (typeof window.performAuth === 'function') {
+                        console.log('Calling performAuth("login")');
+                        window.performAuth('login');
+                    } else {
+                        console.error('performAuth function not found');
+                        alert('Authentication system not ready. Please wait a moment and try again.');
+                    }
+                });
+            }
+
+            // Register button
+            var registerBtn = document.getElementById('register-btn');
+            if (registerBtn) {
+                registerBtn.addEventListener('click', function () {
+                    console.log('Register button clicked');
+                    if (typeof window.performAuth === 'function') {
+                        console.log('Calling performAuth("register")');
+                        window.performAuth('register');
+                    } else {
+                        console.error('performAuth function not found');
+                        alert('Authentication system not ready. Please wait a moment and try again.');
+                    }
+                });
+            }
+
+            // OAuth buttons removed - only email/password signup/login supported on this UI
+
+            // Sign up link — open register tab when clicked
+            var signupLink = document.getElementById('signup-link');
+            if (signupLink) {
+                signupLink.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    document.getElementById('login-form').classList.add('hidden');
+                    document.getElementById('register-form').classList.remove('hidden');
+                    document.getElementById('tab-register-btn').classList.add('active');
+                    document.getElementById('tab-login-btn').classList.remove('active');
+                    // Ensure auth screen is visible
+                    document.getElementById('auth-screen').classList.remove('hidden');
+                });
+            }
+
+            console.log('Event listeners set up successfully');
+        });
+
+        // Fallback timeout - ensure buttons work even if DOMContentLoaded is delayed
+        setTimeout(function () {
+            console.log('Fallback initialization running');
+            if (window.initApp) {
+                initApp();
+            }
+        }, 500);
+
+        // Add event listener for when Supabase is ready to re-bind buttons
+        window.addEventListener('supabaseReady', function () {
+            console.log('Supabase is ready, re-binding button event listeners');
+            setupButtonEventListeners();
+        });
+
+        // Function to setup button event listeners (can be called multiple times)
+        function setupButtonEventListeners() {
+            // Demo button
+            var demoBtn = document.getElementById('demo-btn');
+            if (demoBtn) {
+                demoBtn.onclick = function () {
+                    console.log('Demo button clicked (re-bound)');
+                    if (typeof window.startDemo === 'function') {
+                        window.startDemo();
+                    } else {
+                        alert('Demo function not available yet.');
+                    }
+                };
+            }
+
+            // Login button
+            var loginBtn = document.getElementById('login-btn');
+            if (loginBtn) {
+                loginBtn.onclick = function () {
+                    console.log('Login button clicked (re-bound)');
+                    if (typeof window.performAuth === 'function') {
+                        window.performAuth('login');
+                    } else {
+                        alert('Authentication system not ready.');
+                    }
+                };
+            }
+
+            // Register button
+            var registerBtn = document.getElementById('register-btn');
+            if (registerBtn) {
+                registerBtn.onclick = function () {
+                    console.log('Register button clicked (re-bound)');
+                    if (typeof window.performAuth === 'function') {
+                        window.performAuth('register');
+                    } else {
+                        alert('Authentication system not ready.');
+                    }
+                };
+            }
+
+            // Eye toggle for login password
+            var togglePassLogin = document.getElementById('toggle-pass-login');
+            if (togglePassLogin) {
+                togglePassLogin.style.cursor = 'pointer';
+                togglePassLogin.onclick = function () {
+                    window.togglePasswordVisibility('password-input', 'toggle-pass-login');
+                };
+            }
+
+            // Eye toggle for register password
+            var togglePassReg = document.getElementById('toggle-pass-reg');
+            if (togglePassReg) {
+                togglePassReg.style.cursor = 'pointer';
+                togglePassReg.onclick = function () {
+                    window.togglePasswordVisibility('reg-password-input', 'toggle-pass-reg');
+                };
+            }
+
+            // Social OAuth buttons removed from UI; only email/password flows are available
+        }
+    </script>
+</body>
+
+</html>
