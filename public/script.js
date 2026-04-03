@@ -1042,19 +1042,8 @@ var EditorManager = {
 
 function initMobileDetection() {
     var rotateOverlay = document.getElementById("rotate-overlay");
-    var isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (isMobile && rotateOverlay) {
-        var checkOrientation = function () {
-            var mainApp = document.getElementById('main-app');
-            var editorVisible = mainApp && !mainApp.classList.contains('hidden');
-            // Don't block portrait mode; only show on very small screens where the editor becomes unusable.
-            var isPortrait = (window.innerHeight > window.innerWidth);
-            var verySmall = window.innerWidth < 380;
-            var shouldShow = editorVisible && isPortrait && verySmall;
-            rotateOverlay.style.display = shouldShow ? 'flex' : 'none';
-        };
-        checkOrientation();
-        window.addEventListener("resize", checkOrientation);
+    if (rotateOverlay) {
+        rotateOverlay.style.display = "none";
     }
 }
 
@@ -1080,21 +1069,12 @@ function initMobileOptimizations() {
 
     var setupMobileEvents = function () {
         window.addEventListener('resize', function () {
-            var viewportHeight = window.innerHeight;
-            var editor = document.getElementById('monaco-editor');
-            var bottomPanel = document.getElementById('bottom-panel');
-
-            if (editor && bottomPanel) {
-                if (window.innerWidth <= 768) {
-                    var newHeight = viewportHeight - 200;
-                    if (bottomPanel.style.height === '0px' || bottomPanel.classList.contains('hidden')) {
-                        newHeight = viewportHeight;
-                    }
-                    editor.style.height = newHeight + 'px';
-                }
+            var monacoEl = document.getElementById('monaco-editor');
+            if (monacoEl) monacoEl.style.height = '';
+            if (editor) {
+                requestAnimationFrame(function () { editor.layout(); });
             }
         });
-
         var editorTabs = document.getElementById('file-tabs');
         if (editorTabs) {
             editorTabs.addEventListener('touchstart', function (e) {
@@ -1684,6 +1664,8 @@ function switchDashboardTab(tabName) {
     if (tabName === 'settings') {
         try { loadApiKeys(); } catch (e) { console.error('Failed to load API keys:', e); }
     }
+
+    try { closeDashboardSidebar(); } catch (e) { }
 }
 
 async function updateAdminDashboardAccess() {
@@ -1753,10 +1735,26 @@ async function openAdminAnnouncements() {
     }
 }
 
+function closeDashboardSidebar() {
+    var sidebar = document.getElementById("sidebar-dashboard");
+    var backdrop = document.getElementById("dashboard-sidebar-backdrop");
+    if (sidebar) sidebar.classList.remove("active");
+    if (backdrop) backdrop.classList.add("hidden");
+    document.body.classList.remove("dashboard-sidebar-open");
+}
+
 function toggleDashboardSidebar() {
-    var sidebar = document.getElementById('sidebar-dashboard');
+    var sidebar = document.getElementById("sidebar-dashboard");
     if (!sidebar) return;
-    sidebar.classList.toggle('active');
+    sidebar.classList.toggle("active");
+    var open = sidebar.classList.contains("active");
+    var backdrop = document.getElementById("dashboard-sidebar-backdrop");
+    if (backdrop) {
+        if (open) backdrop.classList.remove("hidden");
+        else backdrop.classList.add("hidden");
+    }
+    if (open) document.body.classList.add("dashboard-sidebar-open");
+    else document.body.classList.remove("dashboard-sidebar-open");
 }
 
 var friendsDashboardState = {
@@ -3079,6 +3077,7 @@ function switchFile(id) {
     TabManager.activateTab(id);
     renderExplorer();
     refreshFixFileDropdown();
+    try { closeIdePanelsIfMobile(); } catch (e) { }
 }
 
 function createNewFile() {
@@ -3109,7 +3108,10 @@ function executeCode() {
     var f = localFiles.find(function (x) { return x.id === activeFileId; });
     if (!f) return showToast("Select a file first", "error");
     var bottomPanel = document.getElementById("bottom-panel");
-    if (bottomPanel && bottomPanel.offsetHeight < 50) bottomPanel.style.height = "200px";
+    if (bottomPanel && bottomPanel.offsetHeight < 50) {
+        bottomPanel.classList.remove("bottom-panel--maximized");
+        bottomPanel.style.height = "200px";
+    }
     if (f.name.endsWith(".html")) {
         switchBottomTab("browser");
         var iframe = document.getElementById("browser-preview");
@@ -3170,6 +3172,7 @@ function switchBottomTab(name) {
 
     if (panel && panel.classList.contains("hidden")) {
         panel.classList.remove("hidden");
+        panel.classList.remove("bottom-panel--maximized");
         panel.style.height = "200px";
     }
 
@@ -3242,25 +3245,31 @@ function handleTerminalInput(event) {
 function closeTerminal() {
     var panel = document.getElementById("bottom-panel");
     if (panel) {
+        panel.classList.remove("bottom-panel--maximized");
         panel.style.height = "0px";
         panel.classList.add("hidden");
     }
+    if (editor) setTimeout(function () { editor.layout(); }, 50);
 }
 
 function minimizeTerminal() {
     var panel = document.getElementById("bottom-panel");
     if (panel) {
         panel.classList.remove("hidden");
+        panel.classList.remove("bottom-panel--maximized");
         panel.style.height = "150px";
     }
+    if (editor) setTimeout(function () { editor.layout(); }, 50);
 }
 
 function maximizeTerminal() {
     var panel = document.getElementById("bottom-panel");
     if (panel) {
         panel.classList.remove("hidden");
-        panel.style.height = "calc(100vh - 60px)";
+        panel.classList.add("bottom-panel--maximized");
+        panel.style.height = "";
     }
+    if (editor) setTimeout(function () { editor.layout(); }, 50);
 }
 
 function openModal(id) {
@@ -3273,26 +3282,159 @@ function closeModal(id) {
     if (el) el.classList.add("hidden");
 }
 
+var IDE_PANEL_TITLES = { explorer: "Explorer", users: "Online Users", chat: "Team Chat", ai: "AI Assistant" };
+
+function isIdeMobileLayout() {
+    try {
+        return typeof window.matchMedia === "function" && window.matchMedia("(max-width: 900px)").matches;
+    } catch (e) {
+        return false;
+    }
+}
+
+function setIdePanelsOpen(open) {
+    var backdrop = document.getElementById("panels-backdrop");
+    var container = document.querySelector(".panels-container");
+    if (open) {
+        document.body.classList.add("ide-panels-open");
+        if (backdrop) backdrop.classList.remove("hidden");
+        if (container) container.classList.add("active");
+    } else {
+        document.body.classList.remove("ide-panels-open");
+        if (backdrop) backdrop.classList.add("hidden");
+        if (container) container.classList.remove("active");
+    }
+}
+
+function closeIdePanels() {
+    var mapping = { explorer: "panel-explorer", users: "panel-users", chat: "panel-chat", ai: "panel-ai" };
+    var container = document.querySelector(".panels-container");
+    if (container) {
+        container.classList.add("hidden");
+        container.classList.remove("active");
+    }
+    setIdePanelsOpen(false);
+    activeSidebarPanel = null;
+    Object.keys(mapping).forEach(function (k) {
+        var pnl = document.getElementById(mapping[k]);
+        if (pnl) pnl.classList.add("hidden");
+    });
+    if (editor) {
+        setTimeout(function () { editor.layout(); }, 50);
+    }
+}
+
+function closeIdePanelsIfMobile() {
+    if (isIdeMobileLayout()) closeIdePanels();
+}
+
+function initIdeMobileShell() {
+    var container = document.querySelector(".panels-container");
+    if (container && isIdeMobileLayout()) {
+        container.classList.add("hidden");
+    }
+
+    var backdrop = document.getElementById("panels-backdrop");
+    if (backdrop) {
+        backdrop.addEventListener("click", function () {
+            closeIdePanels();
+        });
+    }
+    var closeBtn = document.getElementById("panels-close-btn");
+    if (closeBtn) {
+        closeBtn.addEventListener("click", function (e) {
+            e.preventDefault();
+            closeIdePanels();
+        });
+    }
+
+    var dbBackdrop = document.getElementById("dashboard-sidebar-backdrop");
+    if (dbBackdrop) {
+        dbBackdrop.addEventListener("click", function () {
+            closeDashboardSidebar();
+        });
+    }
+    var dbClose = document.getElementById("dashboard-sidebar-close-btn");
+    if (dbClose) {
+        dbClose.addEventListener("click", function (e) {
+            e.preventDefault();
+            closeDashboardSidebar();
+        });
+    }
+
+    function layoutEditorSoon() {
+        if (editor) {
+            requestAnimationFrame(function () {
+                editor.layout();
+            });
+        }
+    }
+
+    var lastWide = window.innerWidth > 900;
+    window.addEventListener("resize", function () {
+        var wide = window.innerWidth > 900;
+        if (wide !== lastWide) {
+            lastWide = wide;
+            if (wide) {
+                setIdePanelsOpen(false);
+                var c = document.querySelector(".panels-container");
+                if (c) {
+                    c.classList.remove("hidden");
+                    c.classList.remove("active");
+                }
+                activeSidebarPanel = "explorer";
+                var mapping = { explorer: "panel-explorer", users: "panel-users", chat: "panel-chat", ai: "panel-ai" };
+                Object.keys(mapping).forEach(function (k) {
+                    var el = document.getElementById(mapping[k]);
+                    if (!el) return;
+                    if (k === "explorer") el.classList.remove("hidden"); else el.classList.add("hidden");
+                });
+            } else {
+                closeIdePanels();
+            }
+        }
+        var monacoEl = document.getElementById("monaco-editor");
+        if (monacoEl) monacoEl.style.height = "";
+        applyLayoutSettings();
+        layoutEditorSoon();
+    });
+    window.addEventListener("orientationchange", function () {
+        setTimeout(function () {
+            var monacoEl = document.getElementById("monaco-editor");
+            if (monacoEl) monacoEl.style.height = "";
+            layoutEditorSoon();
+        }, 250);
+    });
+}
+
 function togglePanel(name) {
     var mapping = { explorer: "panel-explorer", users: "panel-users", chat: "panel-chat", ai: "panel-ai" };
     var container = document.querySelector(".panels-container");
     if (activeSidebarPanel === name && container && !container.classList.contains("hidden")) {
-        container.classList.add("hidden");
-        Object.keys(mapping).forEach(function (k) {
-            var pnl = document.getElementById(mapping[k]);
-            if (pnl) pnl.classList.add("hidden");
-        });
-        activeSidebarPanel = null;
+        closeIdePanels();
         return;
     }
 
     if (container) container.classList.remove("hidden");
+    if (isIdeMobileLayout()) {
+        setIdePanelsOpen(true);
+    } else {
+        setIdePanelsOpen(false);
+    }
+
     activeSidebarPanel = name;
+    var titleEl = document.getElementById("panels-sheet-title");
+    if (titleEl && IDE_PANEL_TITLES[name]) titleEl.textContent = IDE_PANEL_TITLES[name];
+
     Object.keys(mapping).forEach(function (k) {
         var el = document.getElementById(mapping[k]);
         if (!el) return;
         if (k === name) el.classList.remove("hidden"); else el.classList.add("hidden");
     });
+
+    if (editor) {
+        setTimeout(function () { editor.layout(); }, 80);
+    }
 }
 
 function initSettingsInputs() {
@@ -3335,8 +3477,20 @@ function applyEditorSettings() {
 function applyLayoutSettings() {
     var panelWidth = Number(config.panelWidth) || 280;
     var container = document.querySelector(".panels-container");
-    if (container) container.style.width = panelWidth + "px";
-    if (config.sidebarAutoHide) setupSidebarAutoHide(); else resetSidebarAutoHide();
+    if (container) {
+        if (isIdeMobileLayout()) {
+            container.style.width = "";
+        } else {
+            container.style.width = panelWidth + "px";
+        }
+    }
+    if (isIdeMobileLayout()) {
+        resetSidebarAutoHide();
+    } else if (config.sidebarAutoHide) {
+        setupSidebarAutoHide();
+    } else {
+        resetSidebarAutoHide();
+    }
 }
 
 function saveSettings() {
@@ -3507,15 +3661,35 @@ async function performOAuth(provider) {
     }
 }
 
+var authListenerInstalled = false;
+
 function setupAuthListener() {
-    if (!window.supabaseClient) {
+    if (!window.supabaseClient || !window.supabaseClient.auth || typeof window.supabaseClient.auth.onAuthStateChange !== 'function') {
         console.warn('Supabase client not ready for auth listener');
         return;
     }
+    if (authListenerInstalled) return;
+    authListenerInstalled = true;
 
     window.supabaseClient.auth.onAuthStateChange(function (event, session) {
         console.log('Auth state changed:', event);
+        if (event === 'PASSWORD_RECOVERY') {
+            var authScreen = document.getElementById('auth-screen');
+            var dash = document.getElementById('dashboard-screen');
+            var mainApp = document.getElementById('main-app');
+            if (authScreen) authScreen.classList.remove('hidden');
+            if (dash) dash.classList.add('hidden');
+            if (mainApp) mainApp.classList.add('hidden');
+            switchAuthTab('login');
+            openModal('update-password-modal');
+            showToast('Choose a new password to finish resetting your account.', 'info');
+            return;
+        }
         if (event === 'SIGNED_IN' && session) {
+            var updateModal = document.getElementById('update-password-modal');
+            if (updateModal && !updateModal.classList.contains('hidden')) {
+                return;
+            }
             // Re-fetch user to avoid stale session.user without `email_confirmed_at`.
             window.supabaseClient.auth.getUser().then(function (userRes) {
                 var user = userRes && userRes.data ? userRes.data.user : session.user;
@@ -3533,6 +3707,78 @@ function setupAuthListener() {
             currentUsername = "Guest";
         }
     });
+}
+
+function getAuthSiteUrl() {
+    try {
+        if (window.APP_BASE_URL && String(window.APP_BASE_URL).length > 0) {
+            return String(window.APP_BASE_URL).replace(/\/$/, '');
+        }
+    } catch (e) { }
+    return (window.location && window.location.origin) ? window.location.origin : '';
+}
+
+async function sendPasswordResetRequest() {
+    var emailEl = document.getElementById('forgot-password-email');
+    var email = emailEl ? String(emailEl.value || '').trim() : '';
+    if (!email) {
+        showToast('Please enter your email address', 'error');
+        return;
+    }
+    var authClient = window.supabaseClient;
+    if (!authClient || !authClient.auth || typeof authClient.auth.resetPasswordForEmail !== 'function') {
+        showToast('Auth is not ready. Please refresh the page.', 'error');
+        return;
+    }
+    toggleLoading(true);
+    try {
+        var redirectTo = getAuthSiteUrl() + '/';
+        var res = await authClient.auth.resetPasswordForEmail(email, { redirectTo: redirectTo });
+        if (res && res.error) throw res.error;
+        showToast('If an account exists for that email, you will receive a reset link shortly.', 'success');
+        closeModal('forgot-password-modal');
+    } catch (e) {
+        console.error('resetPasswordForEmail', e);
+        showToast('Error: ' + (e && e.message ? e.message : 'Could not send reset email'), 'error');
+    } finally {
+        toggleLoading(false);
+    }
+}
+
+async function submitRecoveryPassword() {
+    var p1 = document.getElementById('recovery-password-input');
+    var p2 = document.getElementById('recovery-password-confirm');
+    var a = p1 ? String(p1.value || '') : '';
+    var b = p2 ? String(p2.value || '') : '';
+    if (a.length < 6) {
+        showToast('Password must be at least 6 characters', 'error');
+        return;
+    }
+    if (a !== b) {
+        showToast('Passwords do not match', 'error');
+        return;
+    }
+    var authClient = window.supabaseClient;
+    if (!authClient || !authClient.auth || typeof authClient.auth.updateUser !== 'function') {
+        showToast('Auth is not ready. Please refresh the page.', 'error');
+        return;
+    }
+    toggleLoading(true);
+    try {
+        var res = await authClient.auth.updateUser({ password: a });
+        if (res && res.error) throw res.error;
+        showToast('Password updated. You can log in with your new password.', 'success');
+        closeModal('update-password-modal');
+        if (p1) p1.value = '';
+        if (p2) p2.value = '';
+        try { await authClient.auth.signOut(); } catch (e2) { }
+        switchAuthTab('login');
+    } catch (e) {
+        console.error('updateUser password', e);
+        showToast('Error: ' + (e && e.message ? e.message : 'Could not update password'), 'error');
+    } finally {
+        toggleLoading(false);
+    }
 }
 
 async function startDemo() {
@@ -4100,6 +4346,10 @@ window.startDemo = function () {
 
 window.logoutUser = logoutUser;
 window.toggleDashboardSidebar = toggleDashboardSidebar;
+window.closeDashboardSidebar = closeDashboardSidebar;
+window.closeIdePanels = closeIdePanels;
+window.sendPasswordResetRequest = sendPasswordResetRequest;
+window.submitRecoveryPassword = submitRecoveryPassword;
 window.switchAuthTab = switchAuthTab;
 window.togglePasswordVisibility = togglePasswordVisibility;
 window.endDemo = endDemo;
@@ -4149,6 +4399,8 @@ if (!window.supabaseClientReady) {
         signUp: function () { return Promise.reject(new Error('Supabase client not ready')); },
         signInWithOAuth: function () { return Promise.reject(new Error('Supabase client not ready')); },
         signOut: function () { return Promise.reject(new Error('Supabase client not ready')); },
+        resetPasswordForEmail: function () { return Promise.reject(new Error('Supabase client not ready')); },
+        updateUser: function () { return Promise.reject(new Error('Supabase client not ready')); },
         onAuthStateChange: function () { return { unsubscribe: function () { } }; }
     };
 }
@@ -4188,6 +4440,9 @@ function initApp() {
     loadUserSettings();
     initEnhancedFeatures();
     setupButtonEventListeners();
+    try {
+        if (window.supabaseClientReady) setupAuthListener();
+    } catch (e) { }
 }
 
 function setupButtonEventListeners() {
@@ -4276,10 +4531,43 @@ function setupButtonEventListeners() {
             if (tabLog) tabLog.classList.remove('active');
         };
     }
+
+    var forgotLink = document.getElementById('forgot-password-link');
+    if (forgotLink) {
+        forgotLink.onclick = function (e) {
+            e.preventDefault();
+            var loginEmail = document.getElementById('email-input');
+            var forgotEmail = document.getElementById('forgot-password-email');
+            if (loginEmail && forgotEmail) forgotEmail.value = loginEmail.value || '';
+            openModal('forgot-password-modal');
+        };
+    }
+    var forgotSubmit = document.getElementById('forgot-password-submit-btn');
+    if (forgotSubmit) {
+        forgotSubmit.onclick = function () {
+            if (typeof sendPasswordResetRequest === 'function') sendPasswordResetRequest();
+        };
+    }
+    var updatePwSubmit = document.getElementById('update-password-submit-btn');
+    if (updatePwSubmit) {
+        updatePwSubmit.onclick = function () {
+            if (typeof submitRecoveryPassword === 'function') submitRecoveryPassword();
+        };
+    }
+    var updatePwCancel = document.getElementById('update-password-cancel-btn');
+    if (updatePwCancel) {
+        updatePwCancel.onclick = function () {
+            closeModal('update-password-modal');
+            if (window.supabaseClient && window.supabaseClient.auth && typeof window.supabaseClient.auth.signOut === 'function') {
+                window.supabaseClient.auth.signOut().catch(function () { });
+            }
+        };
+    }
 }
 
 window.addEventListener('supabaseReady', function () {
     window.supabaseClientReady = true;
+    try { setupAuthListener(); } catch (e) { console.warn(e); }
 });
 
 var TeamChat = {
@@ -5484,6 +5772,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initEnhancedFeatures();
     setupSidebar();
     setupSidebarNavigation();
+    initIdeMobileShell();
 });
 
 window.addEventListener('supabaseReady', function () {

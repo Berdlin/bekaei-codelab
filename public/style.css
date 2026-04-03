@@ -1534,12 +1534,49 @@ body {
     color: var(--danger);
 }
 
+.dashboard-sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 1990;
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+.dashboard-sidebar-backdrop:not(.hidden) {
+    display: block;
+}
+
+.dashboard-sidebar-close {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: rgba(14, 165, 233, 0.12);
+    color: var(--text-main);
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.dashboard-sidebar-close:hover {
+    background: rgba(14, 165, 233, 0.2);
+}
+
+.dashboard-sidebar-close:active {
+    transform: scale(0.96);
+}
+
 .dashboard-sidebar-toggle-btn {
     display: none;
     z-index: 60;
     position: fixed;
     left: 10px;
-    top: 110px;
+    top: max(110px, env(safe-area-inset-top, 0px) + 80px);
 }
 
 @media (max-width: 900px) {
@@ -1576,17 +1613,42 @@ body {
 /* Mobile Responsive */
 @media (max-width: 900px) {
     #sidebar-dashboard {
+        width: 100%;
+        max-width: 100%;
         transform: translateX(-100%);
         position: fixed;
         z-index: 2000;
+        top: 0;
+        bottom: 0;
+        height: 100dvh;
+        max-height: 100dvh;
+        box-shadow: 8px 0 40px rgba(0, 0, 0, 0.18);
     }
 
     #sidebar-dashboard.active {
         transform: translateX(0);
     }
 
+    .sidebar-header {
+        position: relative;
+        padding-top: env(safe-area-inset-top, 0px);
+    }
+
+    .dashboard-sidebar-close {
+        display: inline-flex;
+        position: absolute;
+        top: calc(12px + env(safe-area-inset-top, 0px));
+        right: 12px;
+        z-index: 2;
+    }
+
+    body.dashboard-sidebar-open {
+        overflow: hidden;
+    }
+
     #dashboard-screen {
         margin-left: 0;
+        min-height: 100dvh;
     }
 
     .profile-stats {
@@ -1858,12 +1920,74 @@ body {
     background-size: cover;
     border-right: 1px solid var(--border-color);
     display: flex;
+    flex-direction: row;
+}
+
+.panels-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 2280;
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+
+.panels-backdrop:not(.hidden) {
+    display: block;
+}
+
+.panels-mobile-toolbar {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+}
+
+#panels-sheet-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: 0.02em;
+}
+
+.panels-sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: rgba(14, 165, 233, 0.12);
+    color: var(--text-main);
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.panels-sheet-close:active {
+    transform: scale(0.96);
+}
+
+.panels-sheet-close:hover {
+    background: rgba(14, 165, 233, 0.22);
 }
 
 .sidebar-panel {
     width: 100%;
     display: flex;
     flex-direction: column;
+}
+
+#panel-chat #team-chat-area,
+#panel-ai #ai-chat-area {
+    min-height: 0;
 }
 
 .panel-header {
@@ -2376,6 +2500,30 @@ body {
     display: flex;
     flex-direction: column;
     transition: height 0.3s ease;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.bottom-panel.bottom-panel--maximized {
+    height: min(88dvh, calc(100dvh - 88px)) !important;
+    max-height: min(88dvh, calc(100dvh - 88px));
+}
+
+.bottom-panel .browser-header {
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.bottom-panel .terminal-content,
+.bottom-panel .browser-content {
+    min-height: 0;
+    flex: 1;
+    position: relative;
+    z-index: 1;
 }
 
 .browser-header {
@@ -2506,10 +2654,12 @@ body {
 }
 
 .browser-controls-pc span {
-    width: 22px;
-    height: 22px;
-    font-size: 1.2rem;
-    color: #666;
+    min-width: 32px;
+    min-height: 32px;
+    width: 32px;
+    height: 32px;
+    font-size: 1.15rem;
+    color: var(--text-main);
     background: none !important;
     border-radius: 0;
     display: flex;
@@ -2854,42 +3004,140 @@ body {
 
     #main-app {
         flex-direction: column;
+        min-height: 100dvh;
+        height: 100dvh;
+        max-height: 100dvh;
+        overflow: hidden;
+        position: relative;
+        --mobile-activity-h: 56px;
+        padding-bottom: calc(var(--mobile-activity-h) + env(safe-area-inset-bottom, 0px));
+        box-sizing: border-box;
     }
 
     .activity-bar {
         width: 100%;
-        height: 56px;
+        height: calc(var(--mobile-activity-h) + env(safe-area-inset-bottom, 0px));
+        min-height: calc(var(--mobile-activity-h) + env(safe-area-inset-bottom, 0px));
         display: flex;
         flex-direction: row;
         padding: 6px;
+        padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 2400;
+        background: var(--bg-panel);
+        border-top: 1px solid var(--border-color);
+        border-right: none;
+        box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.12);
+    }
+
+    .activity-bar>div {
+        flex-direction: row;
+        width: 100%;
+        justify-content: space-around;
+        align-items: center;
     }
 
     .activity-bar .icon {
         width: 44px;
         height: 44px;
-        margin: 0 6px;
+        margin: 0 4px;
+    }
+
+    .panels-mobile-toolbar {
+        display: flex;
     }
 
     .panels-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
         width: 100%;
+        max-width: 100%;
+        height: 100dvh;
+        max-height: 100dvh;
+        z-index: 2350;
+        flex-direction: column;
         border-right: none;
-        display: none;
+        display: flex;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s ease;
+        box-shadow: none;
+        overflow: hidden;
+    }
+
+    .panels-container.active:not(.hidden) {
+        transform: translateX(0);
+        box-shadow: 12px 0 40px rgba(0, 0, 0, 0.22);
+    }
+
+    .panels-container .sidebar-panel {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
     }
 
     .editor-area {
         width: 100%;
+        flex: 1;
+        min-height: 0;
+        height: auto !important;
+        max-height: none;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .editor-tabs {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: var(--bg-panel);
+        flex-shrink: 0;
+    }
+
+    .editor-toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 9;
+        background: var(--bg-surface);
+        flex-shrink: 0;
     }
 
     #monaco-editor {
-        height: 50vh;
+        flex: 1 1 auto;
+        min-height: 120px;
+        height: auto !important;
+        max-height: none;
     }
 
     .bottom-panel {
-        height: 40vh;
+        --mobile-bottom-h: min(38vh, 260px);
+        height: var(--mobile-bottom-h);
+        flex-shrink: 0;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(var(--mobile-activity-h) + env(safe-area-inset-bottom, 0px));
+        z-index: 2300;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .bottom-panel.bottom-panel--maximized {
+        height: calc(100dvh - var(--mobile-activity-h) - env(safe-area-inset-bottom, 0px)) !important;
+        max-height: calc(100dvh - var(--mobile-activity-h) - env(safe-area-inset-bottom, 0px));
+    }
+
+    .bottom-panel .browser-header {
+        z-index: 50;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     }
 
     .file-list {
-        max-height: 200px;
+        max-height: none;
     }
 
     .auth-logo,
@@ -2898,94 +3146,17 @@ body {
     }
 }
 
-@media (max-width: 768px) {
-    .editor-area {
-        position: relative;
-        height: 100vh;
-    }
-
-    .editor-tabs {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        background: var(--bg-panel);
-    }
-
-    .editor-toolbar {
-        position: sticky;
-        top: 40px;
-        z-index: 10;
-        background: var(--bg-surface);
-    }
-
-    #monaco-editor {
-        height: calc(100vh - 200px);
+@media (max-width: 900px) and (orientation: landscape) {
+    #main-app {
+        --mobile-activity-h: 52px;
     }
 
     .bottom-panel {
-        height: 200px;
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        z-index: 100;
-        border-top: 1px solid var(--border-color);
+        --mobile-bottom-h: min(42vh, 280px);
     }
+}
 
-    .activity-bar {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 60px;
-        z-index: 1000;
-        background: var(--bg-panel);
-        border-top: 1px solid var(--border-color);
-        border-right: none;
-    }
-
-    .activity-bar>div {
-        flex-direction: row;
-        width: 100%;
-        justify-content: space-around;
-    }
-
-    .activity-bar .icon {
-        width: 50px;
-        height: 50px;
-        margin: 0;
-    }
-
-    .panels-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 300px;
-        z-index: 1000;
-        background: var(--bg-panel);
-        border-bottom: 1px solid var(--border-color);
-        display: none;
-    }
-
-    .panels-container.active {
-        display: flex;
-    }
-
-    .file-list {
-        max-height: 240px;
-    }
-
-    .chat-input-area {
-        position: fixed;
-        bottom: 60px;
-        left: 0;
-        right: 0;
-        z-index: 900;
-        background: var(--bg-panel);
-        border-top: 1px solid var(--border-color);
-    }
-
+@media (max-width: 768px) {
     .modal-box {
         width: 95%;
         max-width: 95%;
@@ -2995,6 +3166,12 @@ body {
     #settings-modal .settings-grid {
         grid-template-columns: 1fr;
         gap: 15px;
+    }
+
+    .activity-bar .icon {
+        width: 50px;
+        height: 50px;
+        margin: 0;
     }
 
     .editor-area.editor-maximized {
@@ -3011,54 +3188,73 @@ body {
         border-top: 1px solid var(--border-color);
     }
 
-    .editor-area.editor-maximized+.bottom-panel {
-        position: fixed;
+    .editor-area.editor-maximized .bottom-panel {
         bottom: 0;
-        left: 0;
-        right: 0;
         z-index: 10001;
     }
-
-    .editor-area.editor-maximized~.activity-bar {
-        display: none;
-    }
-
-    .editor-area.editor-maximized~.panels-container {
-        display: none !important;
-    }
 }
 
-@media (orientation: landscape) {
-    .editor-area {
-        height: 100vh;
-    }
-
-    #monaco-editor {
-        height: calc(100vh - 260px);
-    }
-
-    .bottom-panel {
-        height: 260px;
-    }
-
-    .activity-bar {
-        height: 50px;
-    }
-
-    .activity-bar .icon {
-        width: 40px;
-        height: 40px;
-    }
+body.ide-panels-open {
+    overflow: hidden;
 }
 
-@media (orientation: portrait) {
-    #monaco-editor {
-        height: calc(100vh - 200px);
-    }
+#update-password-modal .input-label,
+#forgot-password-modal .input-label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
 
-    .bottom-panel {
-        height: 200px;
-    }
+.auth-forgot-wrap {
+    text-align: center;
+    margin-top: 14px;
+    margin-bottom: 0;
+}
+
+.auth-link-btn {
+    background: none;
+    border: none;
+    padding: 8px 4px;
+    color: var(--primary);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    font-family: inherit;
+}
+
+.auth-link-btn:hover {
+    color: var(--text-main);
+}
+
+.panels-container .chat-input-area,
+.panels-container #panel-ai .chat-input-area {
+    flex-shrink: 0;
+    z-index: 5;
+    position: relative;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border-color);
+    padding: 12px 14px;
+    gap: 10px;
+}
+
+.panels-container .chat-input-area .dark-input,
+.panels-container #panel-ai .chat-input-area .dark-input {
+    min-height: 44px;
+    padding: 12px 14px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-surface);
+    color: var(--text-main);
+    -webkit-user-select: text;
+    user-select: text;
+    touch-action: manipulation;
+    pointer-events: auto;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .action-btn {
@@ -3092,16 +3288,6 @@ body {
 
 .editor-area:focus-within {
     outline: none;
-}
-
-@media (max-width: 768px) {
-    .editor-area:not(.editor-maximized) #monaco-editor {
-        height: calc(100vh - 200px - 60px);
-    }
-
-    .editor-area:not(.editor-maximized) .bottom-panel {
-        height: 200px;
-    }
 }
 
 @media (max-width: 480px) {
@@ -3191,22 +3377,6 @@ body {
         to {
             transform: translateY(0);
             opacity: 1;
-        }
-    }
-
-    .editor-area:not(.editor-maximized) {
-        animation: slideDown 0.3s ease;
-    }
-
-    @keyframes slideDown {
-        from {
-            transform: translateY(0);
-            opacity: 1;
-        }
-
-        to {
-            transform: translateY(100%);
-            opacity: 0;
         }
     }
 }
