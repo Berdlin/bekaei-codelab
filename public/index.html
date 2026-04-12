@@ -928,7 +928,7 @@
         <div class="modal-box">
             <h3>Reset password</h3>
             <p style="color:var(--text-muted);font-size:0.95rem;line-height:1.5;margin-bottom:12px;">
-                Enter your account email. We will send a link to reset your password (via Supabase).
+                Enter your account email. We will send a link to reset your password.
             </p>
             <label class="input-label" for="forgot-password-email">Email</label>
             <input type="email" id="forgot-password-email" class="dark-input" placeholder="you@example.com" title="Email" autocomplete="email">
@@ -1176,6 +1176,20 @@
                     if (loginEmail && forgotEmail) forgotEmail.value = loginEmail.value || '';
                     if (typeof window.openModal === 'function') {
                         window.openModal('forgot-password-modal');
+                    }
+                };
+            }
+
+            // Forgot password submit button
+            var forgotSubmit = document.getElementById('forgot-password-submit-btn');
+            if (forgotSubmit) {
+                forgotSubmit.onclick = function () {
+                    console.log('Forgot password submit clicked');
+                    if (typeof window.sendPasswordResetRequest === 'function') {
+                        window.sendPasswordResetRequest();
+                    } else {
+                        console.error('sendPasswordResetRequest function not found');
+                        alert('Reset system not ready. Please try again.');
                     }
                 };
             }
