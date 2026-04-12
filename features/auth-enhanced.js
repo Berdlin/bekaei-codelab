@@ -1,7 +1,4 @@
-﻿
-
-
-class EnhancedAuth {
+﻿class EnhancedAuth {
     constructor() {
         this.supabase = null;
         this.currentUser = null;
@@ -182,50 +179,6 @@ class EnhancedAuth {
         this.showToast('Logged out successfully', 'success');
     }
 
-    async resetPassword(email) {
-        try {
-            const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: `${(window.APP_BASE_URL && window.APP_BASE_URL.length > 0 ? window.APP_BASE_URL : window.location.origin)}/auth/reset-password`
-            });
-
-            if (error) throw error;
-
-            this.showPasswordResetSuccess(email);
-        } catch (error) {
-            console.error('Password reset error:', error);
-            this.showAuthError('Password reset failed: ' + error.message);
-        }
-    }
-
-    async updatePassword(newPassword) {
-        try {
-            const { error } = await this.supabase.auth.updateUser({
-                password: newPassword
-            });
-
-            if (error) throw error;
-
-            this.showPasswordUpdateSuccess();
-        } catch (error) {
-            console.error('Password update error:', error);
-            this.showAuthError('Password update failed: ' + error.message);
-        }
-    }
-
-    showPasswordRecovery() {
-        // Show the password recovery UI (update password modal)
-        const modal = document.getElementById('update-password-modal');
-        if (modal) {
-            modal.classList.remove('hidden');
-            // Focus on the password input
-            const passwordInput = document.getElementById('recovery-password-input');
-            if (passwordInput) {
-                passwordInput.focus();
-            }
-        }
-        this.showToast('Please enter your new password.', 'info');
-    }
-
     async updateProfile(updates) {
         try {
             const { error } = await this.supabase.auth.updateUser({
@@ -310,14 +263,6 @@ class EnhancedAuth {
         this.showToast(`Please verify your email (${email}) before logging in.`, 'warning');
     }
 
-    showPasswordResetSuccess(email) {
-        this.showToast(`Password reset link sent to ${email}`, 'success');
-    }
-
-    showPasswordUpdateSuccess() {
-        this.showToast('Password updated successfully', 'success');
-    }
-
     showProfileUpdateSuccess() {
         this.showToast('Profile updated successfully', 'success');
     }
@@ -352,7 +297,5 @@ window.loginWithOAuth = (provider) => window.enhancedAuth.loginWithOAuth(provide
 window.loginWithEmail = (email, password) => window.enhancedAuth.loginWithEmail(email, password);
 window.registerWithEmail = (email, password, username) => window.enhancedAuth.registerWithEmail(email, password, username);
 window.logout = () => window.enhancedAuth.logout();
-window.resetPassword = (email) => window.enhancedAuth.resetPassword(email);
-window.updatePassword = (password) => window.enhancedAuth.updatePassword(password);
 window.updateProfile = (updates) => window.enhancedAuth.updateProfile(updates);
 
