@@ -532,7 +532,7 @@
                         </button>
                     ` : ''}
                 </div>
-                <div class="post-content">${escapeHtml(post.content)}</div>
+                <div class="post-content">${formatContent(post.content)}</div>
                 ${attachmentHTML}
                 <div class="post-actions">
                     <button class="post-action-btn ${isLiked ? 'liked' : ''}" onclick="window.community.toggleLike(${post.id})">
@@ -581,7 +581,7 @@
                     <span class="comment-author" style="cursor:pointer;color:var(--primary);" onclick="window.community.viewUserProfile('${comment.user_id}')" title="View profile">${escapeHtml(comment.profiles?.username || 'Anonymous')}</span>
                     <span class="comment-time">${formatTimeAgo(comment.created_at)}</span>
                 </div>
-                <div class="comment-content">${escapeHtml(comment.content)}</div>
+                <div class="comment-content">${formatContent(comment.content)}</div>
             </div>
         `).join('');
     }
@@ -693,6 +693,28 @@
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    /**
+     * Convert URLs in text to clickable links
+     * Must be called after escapeHtml to prevent XSS
+     */
+    function linkifyText(text) {
+        if (!text) return text;
+        // URL regex pattern matching http/https URLs
+        const urlPattern = /(https?:\/\/[^\s<]+[^\s<.,;:?!\)\]\}"'])/gi;
+        return text.replace(urlPattern, function(url) {
+            // Ensure URL doesn't end with punctuation that was captured by regex
+            let cleanUrl = url.replace(/[.,;:?!\)\]\}"']+$/, '');
+            return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="community-link">${cleanUrl}</a>`;
+        });
+    }
+
+    /**
+     * Format content with links - escapes HTML then linkifies URLs
+     */
+    function formatContent(text) {
+        return linkifyText(escapeHtml(text));
     }
 
     /**

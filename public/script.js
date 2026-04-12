@@ -2431,6 +2431,22 @@ async function logoutUser() {
     if (window.supabaseClient) {
         try { await window.supabaseClient.auth.signOut(); } catch (e) { }
     }
+
+    // Clear all localStorage session data to prevent auto-login on refresh
+    var userId = currentUser ? currentUser.id : null;
+    localStorage.removeItem('bekaei_logged_in');
+    localStorage.removeItem('bekaei_user');
+    if (userId) {
+        localStorage.removeItem('bekaei_user_' + userId);
+        localStorage.removeItem('bekaei_friends_' + userId);
+        // Clear any DM conversations for this user
+        var dmsPrefix = 'bekaei_dms_' + userId + '_';
+        for (var i = localStorage.length - 1; i >= 0; i--) {
+            var k = localStorage.key(i);
+            if (k && k.indexOf(dmsPrefix) === 0) localStorage.removeItem(k);
+        }
+    }
+
     currentUser = null;
     currentUsername = "Guest";
 
@@ -5012,11 +5028,29 @@ async function sendAIMessage() {
     var mode = modeSelect ? modeSelect.value : "chat";
     var provider = providerSelect ? providerSelect.value : "openrouter";
 
-    // Fetch API key from dashboard settings
-    var userApiKey = await getApiKeyForProvider(provider);
+    // Handle fix mode instruction input
+    var fixInstructionInput = document.getElementById("ai-fix-instruction");
+    if (mode === "fix") {
+        message = (fixInstructionInput && fixInstructionInput.value ? fixInstructionInput.value.trim() : "") || message;
+    }
+    if (!message) return;
+
+    // Try to get API key from SavedApiKeys first, then fallback to getApiKeyForProvider
+    var userApiKey = "";
+    if (window.SavedApiKeys && window.SavedApiKeys[provider]) {
+        userApiKey = window.SavedApiKeys[provider];
+    }
+    // Fallback to fetching from database if not in memory
+    if (!userApiKey) {
+        userApiKey = await getApiKeyForProvider(provider);
+    }
 
     if (!userApiKey) {
-        showToast("Please add your API key in Settings (Dashboard) first", "error");
+        showToast("Please add your API key for " + provider + " in the Dashboard Settings first.", "warning");
+        returnToDashboard();
+        setTimeout(function() {
+            switchDashboardTab('settings');
+        }, 100);
         return;
     }
 
@@ -5033,6 +5067,9 @@ async function sendAIMessage() {
     if (mode === "auto") {
         input.value = "";
         await implementWithAI(message, model, userApiKey, provider);
+    } else if (mode === "fix") {
+        input.value = "";
+        await fixWithAI(message, model, userApiKey, provider);
     } else if (mode === "thinking") {
         input.value = "";
         await implementWithAIThinking(message, model, userApiKey, provider);
@@ -5558,65 +5595,6 @@ if (editor) {
             }
         }
     });
-}
-
-async function sendAIMessage() {
-    var input = document.getElementById("ai-chat-input");
-    var modeInput = document.getElementById("ai-mode");
-    var providerInput = document.getElementById("ai-provider");
-    var modelInput = document.getElementById("ai-model-select");
-
-    var mode = modeInput ? modeInput.value : "chat";
-    if (!input) return;
-    var message = input.value.trim();
-    var provider = providerInput ? providerInput.value : "openrouter";
-    var model = modelInput ? modelInput.value : "openai/gpt-3.5-turbo";
-    var fixInstructionInput = document.getElementById("ai-fix-instruction");
-    if (mode === "fix") {
-        message = (fixInstructionInput && fixInstructionInput.value ? fixInstructionInput.value.trim() : "") || message;
-    }
-    if (!message) return;
-
-    // Get the key for the selected provider
-    var userApiKey = "";
-    if (window.SavedApiKeys && window.SavedApiKeys[provider]) {
-        userApiKey = window.SavedApiKeys[provider];
-    }
-
-    if (!userApiKey) {
-        showToast("Please add your API key for " + provider + " in the Dashboard Settings first.", "warning");
-        returnToDashboard();
-        setTimeout(function() {
-            switchDashboardTab('settings');
-        }, 100);
-        return;
-    }
-
-    AIAssistant.addMessage("user", message);
-    input.value = "";
-
-    var chatArea = document.getElementById("ai-chat-area");
-    if (chatArea) {
-        var loading = document.createElement("div");
-        loading.id = "ai-loading";
-        loading.style.cssText = "padding:10px;color:#888;font-size:12px;";
-        loading.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> AI is thinking...';
-        chatArea.appendChild(loading);
-        chatArea.scrollTop = chatArea.scrollHeight;
-    }
-
-    if (mode === "auto") {
-        await implementWithAI(message, model, userApiKey, provider);
-    } else if (mode === "fix") {
-        await fixWithAI(message, model, userApiKey, provider);
-    } else if (mode === "thinking") {
-        await implementWithAIThinking(message, model, userApiKey, provider);
-    } else {
-        var response = await AIAssistant.callAPI(model, message, userApiKey, provider);
-        var loading = document.getElementById("ai-loading");
-        if (loading) loading.remove();
-        AIAssistant.addMessage("assistant", response);
-    }
 }
 
 async function fixWithAI(message, model, userApiKey, provider) {

@@ -4010,6 +4010,18 @@ body.ide-panels-open {
     line-height: 1.5;
 }
 
+/* Clickable links in community posts and comments */
+.community-link {
+    color: var(--primary);
+    text-decoration: underline;
+    word-break: break-all;
+}
+
+.community-link:hover {
+    color: var(--primary-light, #38bdf8);
+    text-decoration: none;
+}
+
 .comment-input-area {
     display: flex;
     gap: 10px;
