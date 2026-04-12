@@ -4016,6 +4016,12 @@ async function enterRoom(roomId, password, isPrivateRoom, ownerEmail) {
     }
 
     if (!currentUser) return showToast("Please login first", "error");
+    
+    // CRITICAL: Clear local files before entering new room to prevent duplication
+    localFiles = [];
+    openTabs = [];
+    activeFileId = null;
+    
     toggleLoading(true);
     try {
         var res = await fetch("/api/check-room", {
@@ -4069,29 +4075,8 @@ async function enterRoom(roomId, password, isPrivateRoom, ownerEmail) {
         var panelChat = document.getElementById('panel-chat');
         if (panelChat) panelChat.classList.remove('hidden');
 
-        await new Promise(function (resolve) {
-            var resolved = false;
-            function onceInit() {
-                if (!resolved) { resolved = true; resolve(); }
-            }
-
-            if (localFiles && localFiles.length > 0) return onceInit();
-
-            var timer = setTimeout(function () {
-                if (!resolved) {
-                    resolved = true;
-                    loadProjectFilesFromSupabase(roomId).then(resolve).catch(resolve);
-                }
-            }, 1500);
-
-            var poll = setInterval(function () {
-                if (localFiles && localFiles.length > 0) {
-                    clearTimeout(timer);
-                    clearInterval(poll);
-                    onceInit();
-                }
-            }, 100);
-        });
+        // Load files from server - localFiles was already cleared above
+        await loadProjectFilesFromSupabase(roomId);
 
         initMonaco();
     } catch (e) {
@@ -5044,8 +5029,17 @@ async function continueThinkingImplementation() {
         updateBrowserPreview();
     }
 
+    // Save to server if in a room
     if (!isDemoMode && currentRoomId) {
-        ProjectStorage.saveProject();
+        try {
+            var saved = await ProjectStorage.saveProject();
+            if (!saved) {
+                showToast("Files created but failed to save to cloud", "warning");
+            }
+        } catch (e) {
+            console.error("Error saving project:", e);
+            showToast("Error saving to cloud: " + e.message, "error");
+        }
     }
 
     if (actions.length > 0) {
@@ -5967,8 +5961,17 @@ async function continueAutoActImplementation() {
         updateBrowserPreview();
     }
 
+    // Save to server if in a room
     if (!isDemoMode && currentRoomId) {
-        ProjectStorage.saveProject();
+        try {
+            var saved = await ProjectStorage.saveProject();
+            if (!saved) {
+                showToast("Files created but failed to save to cloud", "warning");
+            }
+        } catch (e) {
+            console.error("Error saving project:", e);
+            showToast("Error saving to cloud: " + e.message, "error");
+        }
     }
 
     if (actions.length > 0) {
