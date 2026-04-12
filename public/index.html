@@ -1194,6 +1194,30 @@
                 };
             }
 
+            // Update password submit button
+            var updatePwSubmit = document.getElementById('update-password-submit-btn');
+            if (updatePwSubmit) {
+                updatePwSubmit.onclick = function () {
+                    console.log('Update password submit clicked');
+                    if (typeof window.submitRecoveryPassword === 'function') {
+                        window.submitRecoveryPassword();
+                    } else {
+                        console.error('submitRecoveryPassword function not found');
+                        alert('Update system not ready. Please try again.');
+                    }
+                };
+            }
+
+            // Update password cancel button
+            var updatePwCancel = document.getElementById('update-password-cancel-btn');
+            if (updatePwCancel) {
+                updatePwCancel.onclick = function () {
+                    if (typeof window.closeModal === 'function') {
+                        window.closeModal('update-password-modal');
+                    }
+                };
+            }
+
             // Social OAuth buttons removed from UI; only email/password flows are available
         }
     </script>
