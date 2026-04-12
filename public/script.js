@@ -4731,6 +4731,27 @@ function addChatStyles() {
 }
 addChatStyles();
 
+function formatMarkdown(text) {
+    if (!text) return "";
+    // Escape HTML first
+    var safe = escapeHtml(text);
+    // Convert markdown bold
+    safe = safe.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    // Convert markdown italic
+    safe = safe.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    // Convert code blocks
+    safe = safe.replace(/```([\w]*)\n?([\s\S]*?)```/g, '<pre style="background:#1e293b;padding:8px;border-radius:4px;overflow-x:auto;margin:8px 0;"><code>$2</code></pre>');
+    // Convert inline code
+    safe = safe.replace(/`([^`]+)`/g, '<code style="background:#1e293b;padding:2px 4px;border-radius:3px;font-family:monospace;">$1</code>');
+    // Convert bullet points
+    safe = safe.replace(/^[•\-] (.*)$/gm, '<li style="margin-left:16px;">$1</li>');
+    // Convert headers
+    safe = safe.replace(/^#{1,6} (.*)$/gm, '<strong style="font-size:1.1em;display:block;margin-top:8px;">$1</strong>');
+    // Convert newlines to breaks (only outside of pre tags)
+    safe = safe.replace(/\n/g, '<br>');
+    return safe;
+}
+
 var AIAssistant = {
     chatHistory: [],
     addMessage: function (role, content) {
@@ -4739,18 +4760,19 @@ var AIAssistant = {
         if (!chatArea) return;
 
         var msgDiv = document.createElement("div");
-        msgDiv.style.cssText = "margin-bottom:12px;padding:10px;border-radius:8px;max-width:85%;word-wrap:break-word;";
+        msgDiv.style.cssText = "margin-bottom:12px;padding:12px;border-radius:8px;max-width:90%;word-wrap:break-word;font-size:13px;line-height:1.5;";
         msgDiv.style.color = "#0f172a";
 
         if (role === "user") {
             msgDiv.style.background = "rgba(99, 102, 241, 0.2)";
             msgDiv.style.marginLeft = "auto";
             msgDiv.style.textAlign = "right";
+            msgDiv.innerHTML = "<strong>You:</strong><br>" + escapeHtml(content);
         } else {
             msgDiv.style.background = "rgba(34, 197, 94, 0.1)";
+            msgDiv.innerHTML = "<strong>AI:</strong><br>" + formatMarkdown(content);
         }
 
-        msgDiv.innerHTML = "<strong>" + (role === "user" ? "You" : "AI") + ":</strong><br>" + escapeHtml(content);
         chatArea.appendChild(msgDiv);
         chatArea.scrollTop = chatArea.scrollHeight;
     },
@@ -4819,6 +4841,12 @@ function toggleAIMode() {
     var fixControls = document.getElementById("ai-fix-controls");
     var fixInstruction = document.getElementById("ai-fix-instruction");
 
+    // Clear any pending discussion modes
+    window.autoActDiscussionMode = false;
+    window.thinkingDiscussionMode = false;
+    window.autoActContext = null;
+    window.thinkingContext = null;
+
     if (fixControls) fixControls.classList.add("hidden");
 
     if (mode === "auto") {
@@ -4865,30 +4893,94 @@ function refreshFixFileDropdown() {
 }
 
 async function implementWithAIThinking(message, model, userApiKey, provider) {
-    var enhancedPrompt = "You are an expert full-stack developer. Analyze the request deeply and create complete, working code.\n\n" +
+    var chatArea = document.getElementById("ai-chat-area");
+    
+    // Step 1: Deep Analysis
+    var analysisPrompt = "You are an expert full-stack developer. Perform a DEEP ANALYSIS of this request:\n\n" +
         "Request: " + message + "\n\n" +
+        "Provide a comprehensive analysis including:\n" +
+        "1. 🔍 **Problem Understanding** - What exactly needs to be built\n" +
+        "2. 🏗️ **Architecture & Approach** - Best technical approach\n" +
+        "3. 📁 **File Structure** - Which files to create and their purposes\n" +
+        "4. 🎨 **Design Considerations** - UI/UX approach\n" +
+        "5. ⚡ **Key Features** - Main functionality to implement\n" +
+        "6. 🔧 **Technical Details** - Important implementation notes\n\n" +
+        "This is the ANALYSIS phase only - do not write code yet.";
+    
+    var loading = document.getElementById("ai-loading");
+    if (loading) loading.innerHTML = "<strong>AI:</strong> Performing deep analysis...";
+    
+    var analysisResponse = await AIAssistant.callAPIThinking(analysisPrompt, model, userApiKey, provider);
+    
+    // Show the deep analysis
+    AIAssistant.addMessage("assistant", "🧠 **Deep Analysis Mode**\n\n" + analysisResponse);
+    
+    if (chatArea) {
+        var continueDiv = document.createElement("div");
+        continueDiv.id = "ai-thinking-continue";
+        continueDiv.style.cssText = "margin:12px 0;padding:12px;background:rgba(34,197,94,0.1);border-radius:8px;text-align:center;";
+        continueDiv.innerHTML = 
+            '<div style="color:#64748b;font-size:12px;margin-bottom:8px;">Analysis complete. Ready to generate code?</div>' +
+            '<button onclick="continueThinkingImplementation()" class="action-btn" style="margin-right:8px;">' +
+            '<i class="fa-solid fa-code"></i> Generate Code</button>' +
+            '<button onclick="chatWithAIAboutThinking()" class="action-btn secondary">' +
+            '<i class="fa-solid fa-comments"></i> Discuss</button>';
+        chatArea.appendChild(continueDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+    }
+    
+    // Store context
+    window.thinkingContext = {
+        message: message,
+        model: model,
+        userApiKey: userApiKey,
+        provider: provider,
+        analysis: analysisResponse
+    };
+}
+
+async function continueThinkingImplementation() {
+    var context = window.thinkingContext;
+    if (!context) {
+        showToast("No pending implementation", "warning");
+        return;
+    }
+    
+    var continueDiv = document.getElementById("ai-thinking-continue");
+    if (continueDiv) continueDiv.remove();
+    
+    var chatArea = document.getElementById("ai-chat-area");
+    var loadingDiv = document.createElement("div");
+    loadingDiv.id = "ai-loading";
+    loadingDiv.style.cssText = "margin-bottom:12px;color:#888;font-style:italic;";
+    loadingDiv.innerHTML = "<strong>AI:</strong> Generating complete implementation...";
+    if (chatArea) {
+        chatArea.appendChild(loadingDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+    }
+    
+    var codePrompt = "Based on this deep analysis:\n" + context.analysis + "\n\n" +
+        "Now generate the COMPLETE, PRODUCTION-READY implementation for:\n" + context.message + "\n\n" +
         "Requirements:\n" +
-        "1. HTML should be semantic, accessible, and well-structured\n" +
-        "2. CSS should be modern, responsive, and visually appealing with:\n" +
-        "   - Modern color schemes (not just plain colors)\n" +
-        "   - Smooth transitions and hover effects\n" +
-        "   - Proper spacing and typography\n" +
-        "   - Flexbox/Grid layouts where appropriate\n" +
-        "   - Box shadows and subtle gradients\n" +
-        "3. JavaScript should be clean and functional\n" +
-        "4. Link files together properly (HTML → CSS → JS)\n\n" +
-        "Return code blocks for each file with proper language tags AND include the filename after the language tag.\n" +
-        "Example:\n```html index.html\n<!DOCTYPE html>\n...\n```\n```css style.css\n...\n```\n```js script.js\n...\n```\n\nCreate a complete, working implementation.";
-
-    var response = await AIAssistant.callAPIThinking(enhancedPrompt, model, userApiKey, provider);
-
+        "1. HTML: semantic, accessible, well-structured\n" +
+        "2. CSS: modern, responsive, beautiful design with smooth effects\n" +
+        "3. JavaScript: clean, functional, properly linked\n" +
+        "4. Return code blocks with filenames like: ```html index.html\n...\n```\n\n" +
+        "Create a complete, working implementation that matches the analysis.";
+    
+    var response = await AIAssistant.callAPIThinking(codePrompt, context.model, context.userApiKey, context.provider);
+    
     var loading = document.getElementById("ai-loading");
     if (loading) loading.remove();
-
+    
+    AIAssistant.addMessage("assistant", "✅ **Implementation Generated**\n\nCode has been applied to your project.");
+    
     var codeBlocks = response.match(/```[\w]*\n[\s\S]*?```/g) || [];
 
     if (codeBlocks.length === 0) {
-        showToast("AI analyzed your request", "info");
+        AIAssistant.addMessage("assistant", response);
+        showToast("AI processed your request", "info");
+        window.thinkingContext = null;
         return;
     }
 
@@ -4960,6 +5052,65 @@ async function implementWithAIThinking(message, model, userApiKey, provider) {
         var actionSummary = actions.join(", ");
         showToast("✓ " + actionSummary, "success");
     }
+    
+    // Clear context
+    window.thinkingContext = null;
+}
+
+function chatWithAIAboutThinking() {
+    var continueDiv = document.getElementById("ai-thinking-continue");
+    if (continueDiv) continueDiv.remove();
+    
+    var chatArea = document.getElementById("ai-chat-area");
+    
+    AIAssistant.addMessage("assistant", "💬 Let's discuss the analysis. What questions do you have?\n\n" +
+        "You can:\n" +
+        "• Ask for clarification on any section\n" +
+        "• Request changes to the approach\n" +
+        "• Add or remove features\n" +
+        "• Discuss alternatives\n\n" +
+        "Type 'generate' or 'code' when ready to proceed.");
+    
+    window.thinkingDiscussionMode = true;
+    
+    var input = document.getElementById("ai-chat-input");
+    if (input) input.placeholder = "Discuss the analysis or type 'generate' to proceed...";
+    
+    if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+async function handleThinkingDiscussion(message) {
+    var context = window.thinkingContext;
+    if (!context) return false;
+    
+    var proceedKeywords = ['generate', 'code', 'proceed', 'continue', 'do it', 'create it', 'build it', 'make it', 'go'];
+    var wantsToProceed = proceedKeywords.some(function(keyword) {
+        return message.toLowerCase().includes(keyword);
+    });
+    
+    if (wantsToProceed) {
+        await continueThinkingImplementation();
+        window.thinkingDiscussionMode = false;
+        var input = document.getElementById("ai-chat-input");
+        if (input) input.placeholder = "Describe what to build in detail...";
+        return true;
+    }
+    
+    var discussionPrompt =
+        "You are discussing a deep technical analysis with the user.\n\n" +
+        "Original Request: " + context.message + "\n\n" +
+        "Analysis: " + context.analysis + "\n\n" +
+        "User's Question: " + message + "\n\n" +
+        "Provide a detailed, technical response. If they want changes, explain the implications. " +
+        "Remind them to type 'generate' when ready.";
+    
+    var response = await AIAssistant.callAPIThinking(discussionPrompt, context.model, context.userApiKey, context.provider);
+    AIAssistant.addMessage("assistant", response);
+    
+    var chatArea = document.getElementById("ai-chat-area");
+    if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+    
+    return true;
 }
 
 function extractLanguageFromCodeBlock(codeBlock) {
@@ -5065,14 +5216,28 @@ async function sendAIMessage() {
     }
 
     if (mode === "auto") {
-        input.value = "";
-        await implementWithAI(message, model, userApiKey, provider);
+        // Check if we're in discussion mode
+        if (window.autoActDiscussionMode && window.autoActContext) {
+            AIAssistant.addMessage("user", message);
+            input.value = "";
+            await handleAutoActDiscussion(message);
+        } else {
+            input.value = "";
+            await implementWithAI(message, model, userApiKey, provider);
+        }
     } else if (mode === "fix") {
         input.value = "";
         await fixWithAI(message, model, userApiKey, provider);
     } else if (mode === "thinking") {
-        input.value = "";
-        await implementWithAIThinking(message, model, userApiKey, provider);
+        // Check if we're in discussion mode
+        if (window.thinkingDiscussionMode && window.thinkingContext) {
+            AIAssistant.addMessage("user", message);
+            input.value = "";
+            await handleThinkingDiscussion(message);
+        } else {
+            input.value = "";
+            await implementWithAIThinking(message, model, userApiKey, provider);
+        }
     } else {
         AIAssistant.addMessage("user", message);
         input.value = "";
@@ -5651,20 +5816,92 @@ async function fixWithAI(message, model, userApiKey, provider) {
 }
 
 async function implementWithAI(message, model, userApiKey, provider) {
+    var chatArea = document.getElementById("ai-chat-area");
+    
+    // Step 1: Deep Analysis
+    var analysisPrompt =
+        "You are an expert code analyst. Analyze the following request deeply and provide:\n" +
+        "1. A clear understanding of what needs to be built\n" +
+        "2. Technical approach and best practices to use\n" +
+        "3. File structure needed (which files to create/modify)\n" +
+        "4. Key implementation details\n\n" +
+        "Request: " + message + "\n\n" +
+        "Provide your analysis in a clear, structured format. Do NOT write code yet - only analysis.";
+    
+    var analysisLoading = document.getElementById("ai-loading");
+    if (analysisLoading) {
+        analysisLoading.innerHTML = "<strong>AI:</strong> Performing deep analysis...";
+    }
+    
+    var analysisResponse = await AIAssistant.callAPI(model, analysisPrompt, userApiKey, provider);
+    
+    // Show the analysis in chat
+    AIAssistant.addMessage("assistant", "🔍 **Deep Analysis**\n\n" + analysisResponse);
+    
+    // Add continue message
+    if (chatArea) {
+        var continueDiv = document.createElement("div");
+        continueDiv.id = "ai-continue-prompt";
+        continueDiv.style.cssText = "margin:12px 0;padding:12px;background:rgba(99,102,241,0.1);border-radius:8px;text-align:center;";
+        continueDiv.innerHTML = 
+            '<div style="color:#64748b;font-size:12px;margin-bottom:8px;">Analysis complete. Ready to implement?</div>' +
+            '<button onclick="continueAutoActImplementation()" class="action-btn" style="margin-right:8px;">' +
+            '<i class="fa-solid fa-play"></i> Implement Now</button>' +
+            '<button onclick="chatWithAIAboutImplementation()" class="action-btn secondary">' +
+            '<i class="fa-solid fa-comments"></i> Discuss First</button>';
+        chatArea.appendChild(continueDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+    }
+    
+    // Store the context for continuation
+    window.autoActContext = {
+        message: message,
+        model: model,
+        userApiKey: userApiKey,
+        provider: provider,
+        analysis: analysisResponse
+    };
+}
+
+async function continueAutoActImplementation() {
+    var context = window.autoActContext;
+    if (!context) {
+        showToast("No pending implementation", "warning");
+        return;
+    }
+    
+    // Remove continue prompt
+    var continuePrompt = document.getElementById("ai-continue-prompt");
+    if (continuePrompt) continuePrompt.remove();
+    
+    var chatArea = document.getElementById("ai-chat-area");
+    var loadingDiv = document.createElement("div");
+    loadingDiv.id = "ai-loading";
+    loadingDiv.style.cssText = "margin-bottom:12px;color:#888;font-style:italic;";
+    loadingDiv.innerHTML = "<strong>AI:</strong> Implementing code...";
+    if (chatArea) {
+        chatArea.appendChild(loadingDiv);
+        chatArea.scrollTop = chatArea.scrollHeight;
+    }
+    
     var prompt =
         "You are a coding assistant inside a multi-file editor.\n" +
+        "Based on this analysis:\n" + context.analysis + "\n\n" +
+        "Implement the following request:\n" + context.message + "\n\n" +
         "If you output code, ALWAYS use separate fenced code blocks per file and include the filename after the language.\n" +
         "Example:\n```html index.html\n...\n```\n```css style.css\n...\n```\n```javascript script.js\n...\n```\n\n" +
-        "User request:\n" + message;
-    var response = await AIAssistant.callAPI(model, prompt, userApiKey, provider);
-
+        "Create complete, working, production-ready code.";
+    
+    var response = await AIAssistant.callAPI(context.model, prompt, context.userApiKey, context.provider);
+    
     var loading = document.getElementById("ai-loading");
     if (loading) loading.remove();
+    
+    AIAssistant.addMessage("assistant", "✅ **Implementation Complete**\n\nCode has been applied to your project.");
 
     var codeBlocks = response.match(/```[\w]*\n[\s\S]*?```/g) || [];
 
     if (codeBlocks.length === 0) {
-        // If no code blocks, treat as normal chat response
         AIAssistant.addMessage("assistant", response);
         showToast("AI processed your request", "info");
         return;
@@ -5738,6 +5975,69 @@ async function implementWithAI(message, model, userApiKey, provider) {
         var actionSummary = actions.join(", ");
         showToast("✓ " + actionSummary, "success");
     }
+    
+    // Clear the context
+    window.autoActContext = null;
+}
+
+function chatWithAIAboutImplementation() {
+    var continuePrompt = document.getElementById("ai-continue-prompt");
+    if (continuePrompt) continuePrompt.remove();
+    
+    var chatArea = document.getElementById("ai-chat-area");
+    
+    AIAssistant.addMessage("assistant", "💬 Let's discuss the implementation. What would you like to know or change?\n\n" +
+        "You can ask me to:\n" +
+        "• Explain any part of the analysis\n" +
+        "• Modify the approach\n" +
+        "• Add specific features\n" +
+        "• Change the file structure\n\n" +
+        "Type your message and I'll respond. When you're ready, just say 'implement' or 'go' and I'll proceed.");
+    
+    // Enable discussion mode
+    window.autoActDiscussionMode = true;
+    
+    // Change input placeholder
+    var input = document.getElementById("ai-chat-input");
+    if (input) input.placeholder = "Ask about the implementation or type 'implement' to proceed...";
+    
+    if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+async function handleAutoActDiscussion(message) {
+    var context = window.autoActContext;
+    if (!context) return false;
+    
+    // Check if user wants to proceed with implementation
+    var proceedKeywords = ['implement', 'go', 'proceed', 'continue', 'do it', 'create it', 'build it', 'make it'];
+    var wantsToProceed = proceedKeywords.some(function(keyword) {
+        return message.toLowerCase().includes(keyword);
+    });
+    
+    if (wantsToProceed) {
+        await continueAutoActImplementation();
+        window.autoActDiscussionMode = false;
+        var input = document.getElementById("ai-chat-input");
+        if (input) input.placeholder = "Describe what to build...";
+        return true;
+    }
+    
+    // Otherwise, continue the discussion
+    var discussionPrompt =
+        "You are discussing the implementation of a feature with the user.\n\n" +
+        "Original Request: " + context.message + "\n\n" +
+        "Previous Analysis: " + context.analysis + "\n\n" +
+        "User's Question/Comment: " + message + "\n\n" +
+        "Provide a helpful, detailed response. If they ask to change something, acknowledge it and explain how it would affect the implementation. " +
+        "Keep your response conversational but informative. At the end, remind them they can type 'implement' when ready to proceed.";
+    
+    var response = await AIAssistant.callAPI(context.model, discussionPrompt, context.userApiKey, context.provider);
+    AIAssistant.addMessage("assistant", response);
+    
+    var chatArea = document.getElementById("ai-chat-area");
+    if (chatArea) chatArea.scrollTop = chatArea.scrollHeight;
+    
+    return true;
 }
 
 var originalInitMonaco = initMonaco;
