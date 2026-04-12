@@ -1165,6 +1165,21 @@
                 };
             }
 
+            // Forgot password link
+            var forgotLink = document.getElementById('forgot-password-link');
+            if (forgotLink) {
+                forgotLink.onclick = function (e) {
+                    e.preventDefault();
+                    console.log('Forgot password link clicked');
+                    var loginEmail = document.getElementById('email-input');
+                    var forgotEmail = document.getElementById('forgot-password-email');
+                    if (loginEmail && forgotEmail) forgotEmail.value = loginEmail.value || '';
+                    if (typeof window.openModal === 'function') {
+                        window.openModal('forgot-password-modal');
+                    }
+                };
+            }
+
             // Social OAuth buttons removed from UI; only email/password flows are available
         }
     </script>

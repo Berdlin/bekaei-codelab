@@ -3732,7 +3732,7 @@ async function sendPasswordResetRequest() {
     }
     toggleLoading(true);
     try {
-        var redirectTo = getAuthSiteUrl() + '/';
+        var redirectTo = 'https://bekaei-codelab-production.up.railway.app/';
         var res = await authClient.auth.resetPasswordForEmail(email, { redirectTo: redirectTo });
         if (res && res.error) throw res.error;
         showToast('If an account exists for that email, you will receive a reset link shortly.', 'success');
