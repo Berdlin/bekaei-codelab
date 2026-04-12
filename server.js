@@ -970,6 +970,11 @@ app.post('/api/friends/messages/send', async (req, res) => {
             db.from('friends').select('user_id').eq('user_id', toUserId).eq('friend_user_id', fromUserId).limit(1)
         ]);
 
+        if ((f1 && f1.error) || (f2 && f2.error)) {
+            console.error('Friend validation error:', (f1 && f1.error) || (f2 && f2.error));
+            return res.status(500).json({ error: ((f1 && f1.error) || (f2 && f2.error)).message || 'Friend validation failed' });
+        }
+
         const isAllowed = (f1 && f1.data && f1.data.length > 0) || (f2 && f2.data && f2.data.length > 0);
         if (!isAllowed) return res.status(403).json({ error: "You can only message accepted friends" });
 
@@ -2554,9 +2559,13 @@ app.get('/api/community/liked/:postId/:userId', async (req, res) => {
     }
 });
 
-io.engine.on("connection_error", (err) => {
-    console.log("Connection error:", err.message);
+app.get('/auth/reset-password', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// -----------------------------------------------------------------------------
+// Community Likes API
+// -----------------------------------------------------------------------------
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {

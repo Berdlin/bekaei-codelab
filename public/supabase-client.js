@@ -83,7 +83,11 @@
         const urlParams = new URLSearchParams(window.location.search);
         const token = urlParams.get('token');
         const provider = urlParams.get('provider');
+        const accessToken = urlParams.get('access_token');
+        const refreshToken = urlParams.get('refresh_token');
+        const type = urlParams.get('type');
 
+        // Handle OAuth tokens (legacy)
         if (token && provider) {
             console.log('OAuth token detected for provider:', provider);
 
@@ -105,6 +109,43 @@
                 if (window.showToast) {
                     window.showToast('OAuth login failed: ' + error.message, 'error');
                 }
+            });
+        }
+        // Handle password recovery tokens
+        else if (accessToken && refreshToken && type === 'recovery') {
+            console.log('Password recovery token detected');
+
+            window.supabaseClient.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken
+            }).then(({ data, error }) => {
+                if (error) {
+                    console.error('Failed to set recovery session:', error);
+                    if (window.showToast) {
+                        window.showToast('Password recovery failed: ' + error.message, 'error');
+                    }
+                    // Clear URL parameters
+                    window.history.replaceState({}, document.title, window.location.pathname);
+                    return;
+                }
+
+                console.log('Password recovery session set successfully');
+
+                // Clear URL parameters for security
+                window.history.replaceState({}, document.title, window.location.pathname);
+
+                setTimeout(() => {
+                    if (window.showToast) {
+                        window.showToast('Please set your new password.', 'info');
+                    }
+                }, 1000);
+            }).catch(error => {
+                console.error('Failed to set recovery session:', error);
+                if (window.showToast) {
+                    window.showToast('Password recovery failed: ' + error.message, 'error');
+                }
+                // Clear URL parameters
+                window.history.replaceState({}, document.title, window.location.pathname);
             });
         }
     }

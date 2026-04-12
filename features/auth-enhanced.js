@@ -212,6 +212,20 @@ class EnhancedAuth {
         }
     }
 
+    showPasswordRecovery() {
+        // Show the password recovery UI (update password modal)
+        const modal = document.getElementById('update-password-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            // Focus on the password input
+            const passwordInput = document.getElementById('recovery-password-input');
+            if (passwordInput) {
+                passwordInput.focus();
+            }
+        }
+        this.showToast('Please enter your new password.', 'info');
+    }
+
     async updateProfile(updates) {
         try {
             const { error } = await this.supabase.auth.updateUser({
