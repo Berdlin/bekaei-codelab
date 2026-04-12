@@ -4957,14 +4957,12 @@ async function continueThinkingImplementation() {
     
     var loading = document.getElementById("ai-loading");
     if (loading) loading.remove();
-    
-    AIAssistant.addMessage("assistant", "✅ **Implementation Generated**\n\nCode has been applied to your project.");
-    
+
     var codeBlocks = response.match(/```[\w]*\n[\s\S]*?```/g) || [];
 
     if (codeBlocks.length === 0) {
         AIAssistant.addMessage("assistant", response);
-        showToast("AI processed your request", "info");
+        showToast("No code blocks found in response", "warning");
         window.thinkingContext = null;
         return;
     }
@@ -4972,11 +4970,16 @@ async function continueThinkingImplementation() {
     var actions = [];
     var filesCreated = [];
 
+    console.log("[Thinking] Processing " + codeBlocks.length + " code blocks...");
+
     codeBlocks.forEach(function (codeBlock) {
         var lang = extractLanguageFromCodeBlock(codeBlock);
         var explicitFilename = extractFilenameFromCodeBlock(codeBlock);
         var code = extractCodeFromCodeBlock(codeBlock);
-        if (!lang) return;
+        if (!lang) {
+            console.warn("[Thinking] Skipping code block - no language detected");
+            return;
+        }
 
         var ext = getExtensionForLanguage(lang);
         var filename = null;
@@ -5000,15 +5003,22 @@ async function continueThinkingImplementation() {
             filename = "file." + ext;
         }
 
+        console.log("[Thinking] Processing file: " + filename + " (lang: " + lang + ")");
+
         var existingFile = localFiles.find(function (f) { return f.name === filename; });
 
         if (existingFile) {
+            console.log("[Thinking] Updating existing file: " + filename);
             existingFile.content = code;
             actions.push("Updated " + filename);
             if (activeFileId === existingFile.id && editor) {
+                console.log("[Thinking] Updating editor for active file: " + filename);
                 editor.setValue(code);
+            } else {
+                console.log("[Thinking] File not active in editor, content updated in memory: " + filename);
             }
         } else {
+            console.log("[Thinking] Creating new file: " + filename);
             var id = "local-" + Math.random().toString(36).substr(2, 9);
             localFiles.push({ id: id, name: filename, content: code, lang: lang });
             filesCreated.push(filename);
@@ -5016,6 +5026,7 @@ async function continueThinkingImplementation() {
         }
     });
 
+    console.log("[Thinking] Actions: " + actions.join(", "));
     renderExplorer();
 
     if (filesCreated.length > 0) {
@@ -5030,21 +5041,28 @@ async function continueThinkingImplementation() {
     }
 
     // Save to server if in a room
+    var saveSuccess = true;
     if (!isDemoMode && currentRoomId) {
         try {
             var saved = await ProjectStorage.saveProject();
             if (!saved) {
-                showToast("Files created but failed to save to cloud", "warning");
+                saveSuccess = false;
+                showToast("Files updated in memory but failed to save to cloud", "warning");
             }
         } catch (e) {
             console.error("Error saving project:", e);
+            saveSuccess = false;
             showToast("Error saving to cloud: " + e.message, "error");
         }
     }
 
     if (actions.length > 0) {
         var actionSummary = actions.join(", ");
+        AIAssistant.addMessage("assistant", "✅ **Implementation Generated**\n\n" + actionSummary + (saveSuccess ? "\n\nChanges have been saved to your project." : "\n\nChanges applied in memory (cloud save failed)."));
         showToast("✓ " + actionSummary, "success");
+    } else {
+        AIAssistant.addMessage("assistant", "⚠️ **No Changes Made**\n\nCode blocks were found but no files were updated.");
+        showToast("No files were updated", "warning");
     }
     
     // Clear context
@@ -5890,25 +5908,29 @@ async function continueAutoActImplementation() {
     
     var loading = document.getElementById("ai-loading");
     if (loading) loading.remove();
-    
-    AIAssistant.addMessage("assistant", "✅ **Implementation Complete**\n\nCode has been applied to your project.");
 
     var codeBlocks = response.match(/```[\w]*\n[\s\S]*?```/g) || [];
 
     if (codeBlocks.length === 0) {
         AIAssistant.addMessage("assistant", response);
-        showToast("AI processed your request", "info");
+        showToast("No code blocks found in response", "warning");
+        window.autoActContext = null;
         return;
     }
 
     var actions = [];
     var filesCreated = [];
 
+    console.log("[AutoAct] Processing " + codeBlocks.length + " code blocks...");
+
     codeBlocks.forEach(function (codeBlock) {
         var lang = extractLanguageFromCodeBlock(codeBlock);
         var explicitFilename = extractFilenameFromCodeBlock(codeBlock);
         var code = extractCodeFromCodeBlock(codeBlock);
-        if (!lang) return;
+        if (!lang) {
+            console.warn("[AutoAct] Skipping code block - no language detected");
+            return;
+        }
 
         var ext = getExtensionForLanguage(lang);
         var filename = null;
@@ -5932,15 +5954,22 @@ async function continueAutoActImplementation() {
             filename = "file." + ext;
         }
 
+        console.log("[AutoAct] Processing file: " + filename + " (lang: " + lang + ")");
+
         var existingFile = localFiles.find(function (f) { return f.name === filename; });
 
         if (existingFile) {
+            console.log("[AutoAct] Updating existing file: " + filename);
             existingFile.content = code;
             actions.push("Updated " + filename);
             if (activeFileId === existingFile.id && editor) {
+                console.log("[AutoAct] Updating editor for active file: " + filename);
                 editor.setValue(code);
+            } else {
+                console.log("[AutoAct] File not active in editor, content updated in memory: " + filename);
             }
         } else {
+            console.log("[AutoAct] Creating new file: " + filename);
             var id = "local-" + Math.random().toString(36).substr(2, 9);
             localFiles.push({ id: id, name: filename, content: code, lang: lang });
             filesCreated.push(filename);
@@ -5948,6 +5977,7 @@ async function continueAutoActImplementation() {
         }
     });
 
+    console.log("[AutoAct] Actions: " + actions.join(", "));
     renderExplorer();
 
     if (filesCreated.length > 0) {
@@ -5962,21 +5992,28 @@ async function continueAutoActImplementation() {
     }
 
     // Save to server if in a room
+    var saveSuccess = true;
     if (!isDemoMode && currentRoomId) {
         try {
             var saved = await ProjectStorage.saveProject();
             if (!saved) {
-                showToast("Files created but failed to save to cloud", "warning");
+                saveSuccess = false;
+                showToast("Files updated in memory but failed to save to cloud", "warning");
             }
         } catch (e) {
             console.error("Error saving project:", e);
+            saveSuccess = false;
             showToast("Error saving to cloud: " + e.message, "error");
         }
     }
 
     if (actions.length > 0) {
         var actionSummary = actions.join(", ");
+        AIAssistant.addMessage("assistant", "✅ **Implementation Complete**\n\n" + actionSummary + (saveSuccess ? "\n\nChanges have been saved to your project." : "\n\nChanges applied in memory (cloud save failed)."));
         showToast("✓ " + actionSummary, "success");
+    } else {
+        AIAssistant.addMessage("assistant", "⚠️ **No Changes Made**\n\nCode blocks were found but no files were updated.");
+        showToast("No files were updated", "warning");
     }
     
     // Clear the context
