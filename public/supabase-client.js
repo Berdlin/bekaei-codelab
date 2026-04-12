@@ -138,6 +138,9 @@
                     if (window.showToast) {
                         window.showToast('Please set your new password.', 'info');
                     }
+                    if (typeof window.openModal === 'function') {
+                        window.openModal('update-password-modal');
+                    }
                 }, 1000);
             }).catch(error => {
                 console.error('Failed to set recovery session:', error);
