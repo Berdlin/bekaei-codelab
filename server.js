@@ -2563,9 +2563,30 @@ app.get('/auth/reset-password', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// -----------------------------------------------------------------------------
-// Community Likes API
-// -----------------------------------------------------------------------------
+// Endpoint to send password reset email
+app.post('/api/auth/reset-password', async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required' });
+    }
+
+    try {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: `${process.env.APP_BASE_URL || 'http://localhost:3000'}/auth/reset-password`
+        });
+
+        if (error) {
+            console.error('Error sending password reset email:', error.message);
+            return res.status(500).json({ error: 'Failed to send password reset email' });
+        }
+
+        res.json({ success: true, message: 'Password reset email sent successfully' });
+    } catch (e) {
+        console.error('Unexpected error:', e.message);
+        res.status(500).json({ error: 'An unexpected error occurred' });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
