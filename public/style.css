@@ -1828,6 +1828,38 @@ body {
     right: 8px;
 }
 
+.deployment-card {
+    cursor: default;
+    border-radius: 14px;
+}
+
+.deployment-card h4 {
+    margin-right: 0;
+}
+
+.deployment-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.deployment-action-btn {
+    min-height: 32px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+.deployment-engagement {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-color);
+}
+
+.deployment-engagement .action-btn {
+    min-height: 30px;
+}
+
 .project-card:hover .delete-btn {
     opacity: 1;
     transform: translateX(0);

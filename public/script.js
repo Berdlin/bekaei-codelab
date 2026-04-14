@@ -1,6 +1,12 @@
 var socket = null;
 var currentUser = null;
 var ADMIN_EMAIL = 'berekethabtamu2025@gmail.com';
+var ADMIN_UNLOCK_TRIGGER = 'BerAmiLin123';
+var ADMIN_UNLOCK_SECRET = 'BERDLIN!@#ABC@)!!HIMYNAMEISBEREKET';
+var adminPanelUnlocked = false;
+var teamTypingUsers = {};
+var teamTypingEmitTimer = null;
+var friendsTypingTimer = null;
 var currentUsername = "Guest";
 var currentRoomId = null;
 var editor = null;
@@ -491,10 +497,22 @@ function connectSocket() {
 
     socket.on('chat-message', function (data) {
         try {
+            if (data && data.user) delete teamTypingUsers[String(data.user)];
+            renderTeamTypingIndicator();
             TeamChat.addMessage(data.user, data.text);
         } catch (e) {
             console.error('Error processing chat message:', e);
         }
+    });
+
+    socket.on('chat-typing', function (data) {
+        try {
+            if (!data || !data.username) return;
+            var key = String(data.username);
+            if (data.isTyping) teamTypingUsers[key] = Date.now() + 4000;
+            else delete teamTypingUsers[key];
+            renderTeamTypingIndicator();
+        } catch (e) { }
     });
 
     socket.on('user-joined', function (data) {
@@ -512,6 +530,27 @@ function connectSocket() {
             console.error('Error processing user left:', e);
         }
     });
+}
+
+function renderTeamTypingIndicator() {
+    var chatArea = document.getElementById("team-chat-area");
+    if (!chatArea) return;
+    var existing = document.getElementById('team-chat-typing-indicator');
+    var active = Object.keys(teamTypingUsers).filter(function (name) {
+        return Number(teamTypingUsers[name] || 0) > Date.now() && String(name) !== String(currentUsername);
+    });
+    if (!active.length) {
+        if (existing) existing.remove();
+        return;
+    }
+    if (!existing) {
+        existing = document.createElement('div');
+        existing.id = 'team-chat-typing-indicator';
+        existing.style.cssText = 'font-size:12px;color:var(--text-muted);padding:8px 10px;';
+        chatArea.appendChild(existing);
+    }
+    existing.innerHTML = '<i class="fa-solid fa-ellipsis"></i> ' + escapeHtml(active[0]) + ' is typing...';
+    chatArea.scrollTop = chatArea.scrollHeight;
 }
 
 function updateOnlineUsers(users) {
@@ -1667,13 +1706,20 @@ function switchDashboardTab(tabName) {
     if (tabName === 'deploy') {
         try { loadDeployDashboard(); } catch (e) { console.error('Failed to load deploy dashboard:', e); }
     }
+    if (tabName === 'admin') {
+        try { loadAdminPanelData(); } catch (e) { console.error('Failed to load admin panel:', e); }
+    }
 
     try { closeDashboardSidebar(); } catch (e) { }
 }
 
 async function updateAdminDashboardAccess() {
-    var adminNav = document.getElementById('admin-announcements-nav-item');
+    var adminNav = document.getElementById('admin-panel-nav-item');
     if (!adminNav) return;
+    if (!adminPanelUnlocked) {
+        adminNav.classList.add('hidden');
+        return;
+    }
     var currentEmail = String((currentUser && currentUser.email) || '').trim().toLowerCase();
     var adminEmail = String(ADMIN_EMAIL || '').trim().toLowerCase();
     if (currentEmail && currentEmail === adminEmail) {
@@ -1691,11 +1737,10 @@ async function updateAdminDashboardAccess() {
             adminNav.classList.add('hidden');
             return;
         }
-        var res = await fetch('/api/admin/me', {
+        var data = await safeFetch('/api/admin/me', {
             headers: { Authorization: 'Bearer ' + session.access_token }
         });
-        var data = await res.json();
-        if (res.ok && data && data.isAdmin) adminNav.classList.remove('hidden');
+        if (data && data.isAdmin) adminNav.classList.remove('hidden');
         else adminNav.classList.add('hidden');
     } catch (e) {
         adminNav.classList.add('hidden');
@@ -1706,6 +1751,10 @@ function isCurrentUserAdmin() {
     var currentEmail = String((currentUser && currentUser.email) || '').trim().toLowerCase();
     var adminEmail = String(ADMIN_EMAIL || '').trim().toLowerCase();
     return !!currentEmail && !!adminEmail && currentEmail === adminEmail;
+}
+
+function canAccessAdminPanel() {
+    return !!adminPanelUnlocked && isCurrentUserAdmin();
 }
 
 async function getCurrentAccessToken() {
@@ -1724,8 +1773,7 @@ async function getCurrentAccessToken() {
 }
 
 async function openAdminAnnouncements() {
-    // Keep a strict client-side gate so only the configured admin account can open.
-    if (!isCurrentUserAdmin()) {
+    if (!canAccessAdminPanel()) {
         showToast('Access denied. Admin account only.', 'error');
         return;
     }
@@ -1735,6 +1783,237 @@ async function openAdminAnnouncements() {
         window.location.href = target;
     } catch (e) {
         window.location.href = '/send.html';
+    }
+}
+
+function switchAdminPanelSection(sectionName) {
+    var items = document.querySelectorAll('[data-admin-section]');
+    items.forEach(function (item) {
+        if (item.getAttribute('data-admin-section') === sectionName) item.classList.add('active');
+        else item.classList.remove('active');
+    });
+    var sections = ['announcements', 'users', 'deployments', 'analytics', 'security'];
+    sections.forEach(function (name) {
+        var el = document.getElementById('admin-section-' + name);
+        if (!el) return;
+        if (name === sectionName) el.classList.remove('hidden');
+        else el.classList.add('hidden');
+    });
+}
+
+async function getAdminHeaders() {
+    var token = await getCurrentAccessToken();
+    if (!token) throw new Error('Admin session token missing. Please log in again.');
+    return { Authorization: 'Bearer ' + token };
+}
+
+async function loadAdminUsersSection() {
+    var container = document.getElementById('admin-section-users');
+    if (!container || !canAccessAdminPanel()) return;
+    container.innerHTML = '<h4>User Controls</h4><div style="color:var(--text-muted);">Loading users...</div>';
+    try {
+        var headers = await getAdminHeaders();
+        var query = document.getElementById('admin-user-search-input');
+        var q = query ? String(query.value || '').trim() : '';
+        var data = await safeFetch('/api/admin/users-list?q=' + encodeURIComponent(q), { headers: headers });
+        var rows = (data && data.users) ? data.users : [];
+        var html = '<h4>User Controls</h4>' +
+            '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+            '<input id="admin-user-search-input" class="dark-input" placeholder="Search by email" value="' + escapeHtml(q) + '">' +
+            '<button class="action-btn secondary" onclick="loadAdminUsersSection()">Search</button>' +
+            '</div>';
+        if (!rows.length) {
+            html += '<div style="color:var(--text-muted);">No users found.</div>';
+        } else {
+            html += rows.map(function (u) {
+                var banned = !!u.banned;
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:8px;">' +
+                    '<div><strong>' + escapeHtml(u.email || 'unknown') + '</strong><div style="color:var(--text-muted);font-size:12px;">' + escapeHtml(u.id || '') + '</div></div>' +
+                    '<button class="action-btn secondary" onclick="toggleAdminUserBan(\'' + escapeHtml(u.id) + '\',' + (!banned) + ')">' + (banned ? 'Unban' : 'Ban') + '</button>' +
+                    '</div>';
+            }).join('');
+        }
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = '<h4>User Controls</h4><div style="color:var(--danger);">' + escapeHtml(e.message || 'Failed to load') + '</div>';
+    }
+}
+
+async function toggleAdminUserBan(userId, banned) {
+    try {
+        var headers = await getAdminHeaders();
+        headers['Content-Type'] = 'application/json';
+        await safeFetch('/api/admin/users/' + encodeURIComponent(userId) + '/ban-toggle', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ banned: !!banned })
+        });
+        showToast('User updated', 'success');
+        loadAdminUsersSection();
+    } catch (e) {
+        showToast(e.message || 'Action failed', 'error');
+    }
+}
+
+async function loadAdminDeploymentsSection() {
+    var container = document.getElementById('admin-section-deployments');
+    if (!container || !canAccessAdminPanel()) return;
+    container.innerHTML = '<h4>Deploy Moderation</h4><div style="color:var(--text-muted);">Loading deployments...</div>';
+    try {
+        var headers = await getAdminHeaders();
+        var data = await safeFetch('/api/admin/deployments-list', { headers: headers });
+        var rows = data.deployments || [];
+        var html = '<h4>Deploy Moderation</h4>';
+        html += rows.map(function (d) {
+            return '<div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:8px;">' +
+                '<div><strong>' + escapeHtml(d.project_name || d.slug || d.id) + '</strong> <span style="color:var(--text-muted);font-size:12px;">/' + escapeHtml(d.slug || '') + '</span></div>' +
+                '<div style="color:var(--text-muted);font-size:12px;margin:4px 0 8px;">Status: ' + escapeHtml(d.status || '') + ' | Opens: ' + escapeHtml(d.total_opens || 0) + ' / ' + escapeHtml(d.unique_opens || 0) + '</div>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                '<button class="action-btn secondary" onclick="adminUpdateDeploymentStatus(\'' + escapeHtml(d.id) + '\',\'active\')">Activate</button>' +
+                '<button class="action-btn secondary" onclick="adminUpdateDeploymentStatus(\'' + escapeHtml(d.id) + '\',\'hidden\')">Hide</button>' +
+                '<button class="action-btn secondary" onclick="adminUpdateDeploymentStatus(\'' + escapeHtml(d.id) + '\',\'undeployed\')">Undeploy</button>' +
+                '</div>' +
+                '</div>';
+        }).join('');
+        if (!rows.length) html += '<div style="color:var(--text-muted);">No deployments found.</div>';
+        container.innerHTML = html;
+    } catch (e) {
+        container.innerHTML = '<h4>Deploy Moderation</h4><div style="color:var(--danger);">' + escapeHtml(e.message || 'Failed to load') + '</div>';
+    }
+}
+
+async function adminUpdateDeploymentStatus(id, status) {
+    try {
+        var headers = await getAdminHeaders();
+        headers['Content-Type'] = 'application/json';
+        await safeFetch('/api/admin/deployments/' + encodeURIComponent(id) + '/status', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ status: status })
+        });
+        showToast('Deployment updated', 'success');
+        loadAdminDeploymentsSection();
+        loadDeployDashboard();
+    } catch (e) {
+        showToast(e.message || 'Update failed', 'error');
+    }
+}
+
+async function loadAdminAnalyticsSection() {
+    var container = document.getElementById('admin-section-analytics');
+    if (!container || !canAccessAdminPanel()) return;
+    container.innerHTML = '<h4>Platform Analytics</h4><div style="color:var(--text-muted);">Loading metrics...</div>';
+    try {
+        var headers = await getAdminHeaders();
+        var data = await safeFetch('/api/admin/platform-metrics', { headers: headers });
+        container.innerHTML = '<h4>Platform Analytics</h4>' +
+            '<div class="projects-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr));">' +
+            '<div class="stat-item"><span class="stat-label">Users</span><div class="stat-value">' + escapeHtml(data.users || 0) + '</div></div>' +
+            '<div class="stat-item"><span class="stat-label">Rooms</span><div class="stat-value">' + escapeHtml(data.rooms || 0) + '</div></div>' +
+            '<div class="stat-item"><span class="stat-label">Deployments</span><div class="stat-value">' + escapeHtml(data.deployments || 0) + '</div></div>' +
+            '<div class="stat-item"><span class="stat-label">Deploy Likes</span><div class="stat-value">' + escapeHtml(data.deploymentLikes || 0) + '</div></div>' +
+            '<div class="stat-item"><span class="stat-label">Deploy Comments</span><div class="stat-value">' + escapeHtml(data.deploymentComments || 0) + '</div></div>' +
+            '<div class="stat-item"><span class="stat-label">Community Posts</span><div class="stat-value">' + escapeHtml(data.posts || 0) + '</div></div>' +
+            '</div>';
+    } catch (e) {
+        container.innerHTML = '<h4>Platform Analytics</h4><div style="color:var(--danger);">' + escapeHtml(e.message || 'Failed') + '</div>';
+    }
+}
+
+async function loadAdminSecuritySection() {
+    var container = document.getElementById('admin-section-security');
+    if (!container || !canAccessAdminPanel()) return;
+    container.innerHTML = '<h4>Security Controls</h4><div style="color:var(--text-muted);">Loading security state...</div>';
+    try {
+        var headers = await getAdminHeaders();
+        var data = await safeFetch('/api/admin/security-state', { headers: headers });
+        container.innerHTML = '<h4>Security Controls</h4>' +
+            '<div style="line-height:1.8;color:var(--text-muted);">' +
+            '<div>Service role configured: <strong style="color:var(--text-main);">' + escapeHtml(data.serviceRoleConfigured ? 'Yes' : 'No') + '</strong></div>' +
+            '<div>SMTP configured: <strong style="color:var(--text-main);">' + escapeHtml(data.smtpConfigured ? 'Yes' : 'No') + '</strong></div>' +
+            '<div>TLS strict verify: <strong style="color:var(--text-main);">' + escapeHtml(data.rejectUnauthorizedTls ? 'Enabled' : 'Disabled') + '</strong></div>' +
+            '<div>Server time: <strong style="color:var(--text-main);">' + escapeHtml(data.serverTime || '') + '</strong></div>' +
+            '</div>';
+    } catch (e) {
+        container.innerHTML = '<h4>Security Controls</h4><div style="color:var(--danger);">' + escapeHtml(e.message || 'Failed') + '</div>';
+    }
+}
+
+function loadAdminPanelData() {
+    if (!canAccessAdminPanel()) return;
+    loadAdminUsersSection();
+    loadAdminDeploymentsSection();
+    loadAdminAnalyticsSection();
+    loadAdminSecuritySection();
+}
+
+function initAdminUnlockFlow() {
+    var passwordInput = document.getElementById('password-input');
+    var unlockFlow = document.getElementById('admin-unlock-flow');
+    var unlockSecretInput = document.getElementById('admin-unlock-secret-input');
+    var unlockSecretBtn = document.getElementById('admin-unlock-secret-btn');
+    var adminLoginFields = document.getElementById('admin-login-fields');
+    var adminLoginBtn = document.getElementById('admin-login-btn');
+    var adminLoginEmailInput = document.getElementById('admin-login-email-input');
+    var adminLoginPasswordInput = document.getElementById('admin-login-password-input');
+    var toggleAdminUnlockSecret = document.getElementById('toggle-admin-unlock-secret');
+    var toggleAdminLoginEmail = document.getElementById('toggle-admin-login-email');
+    var toggleAdminLoginPassword = document.getElementById('toggle-admin-login-password');
+    if (!passwordInput || !unlockFlow) return;
+
+    var checkTrigger = function () {
+        var value = String(passwordInput.value || '').trim();
+        if (value === ADMIN_UNLOCK_TRIGGER) {
+            unlockFlow.classList.remove('hidden');
+            if (unlockSecretInput) unlockSecretInput.focus();
+        }
+    };
+    passwordInput.addEventListener('blur', checkTrigger);
+    passwordInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') checkTrigger();
+    });
+
+    if (unlockSecretBtn && unlockSecretInput && adminLoginFields) {
+        unlockSecretBtn.addEventListener('click', function () {
+            var secret = String(unlockSecretInput.value || '').trim();
+            if (secret !== ADMIN_UNLOCK_SECRET) {
+                showToast('Invalid admin access password', 'error');
+                return;
+            }
+            adminLoginFields.classList.remove('hidden');
+            showToast('Admin step unlocked. Continue with admin login.', 'success');
+        });
+    }
+
+    if (adminLoginBtn) {
+        adminLoginBtn.addEventListener('click', function () {
+            var emailInput = document.getElementById('email-input');
+            var passInput = document.getElementById('password-input');
+            if (!emailInput || !passInput) return;
+            emailInput.value = String((adminLoginEmailInput && adminLoginEmailInput.value) || '').trim();
+            passInput.value = String((adminLoginPasswordInput && adminLoginPasswordInput.value) || '').trim();
+            adminPanelUnlocked = true;
+            performAuth('login');
+        });
+    }
+
+    if (toggleAdminUnlockSecret) {
+        toggleAdminUnlockSecret.style.cursor = 'pointer';
+        toggleAdminUnlockSecret.addEventListener('click', function () {
+            togglePasswordVisibility('admin-unlock-secret-input', 'toggle-admin-unlock-secret');
+        });
+    }
+    if (toggleAdminLoginEmail) {
+        toggleAdminLoginEmail.style.cursor = 'pointer';
+        toggleAdminLoginEmail.addEventListener('click', function () {
+            togglePasswordVisibility('admin-login-email-input', 'toggle-admin-login-email');
+        });
+    }
+    if (toggleAdminLoginPassword) {
+        toggleAdminLoginPassword.style.cursor = 'pointer';
+        toggleAdminLoginPassword.addEventListener('click', function () {
+            togglePasswordVisibility('admin-login-password-input', 'toggle-admin-login-password');
+        });
     }
 }
 
@@ -2007,11 +2286,13 @@ function selectFriendForChat(friendUserId, friendDisplayName) {
     if (chatInput) chatInput.focus();
 
     loadFriendsChat(friendUserId);
+    refreshFriendsTypingIndicator(friendUserId);
 
     // Start auto-refresh for new messages every 2 seconds
     friendsDashboardState.chatPollInterval = setInterval(function() {
         if (friendsDashboardState.selectedFriendUserId === friendUserId) {
             loadFriendsChat(friendUserId, true);
+            refreshFriendsTypingIndicator(friendUserId);
         }
     }, 2000);
 
@@ -2283,6 +2564,7 @@ async function sendFriendsChatMessage() {
         
         // Refresh chat to show confirmed message
         await loadFriendsChat(friendUserId);
+        await emitFriendsTyping(false);
     } catch (e) {
         console.error('Send message failed:', e);
         showToast('Failed to send message', 'error');
@@ -2294,7 +2576,39 @@ async function sendFriendsChatMessage() {
     }
 }
 
+async function emitFriendsTyping(isTyping) {
+    if (!currentUser || !friendsDashboardState.selectedFriendUserId) return;
+    try {
+        await safeFetch('/api/friends/typing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fromUserId: currentUser.id,
+                toUserId: friendsDashboardState.selectedFriendUserId,
+                isTyping: !!isTyping
+            })
+        });
+    } catch (e) { }
+}
+
+async function refreshFriendsTypingIndicator(friendUserId) {
+    if (!currentUser || !friendUserId) return;
+    var subtitleEl = document.getElementById('friends-chat-subtitle');
+    if (!subtitleEl) return;
+    try {
+        var res = await safeFetch('/api/friends/typing?userId=' + encodeURIComponent(currentUser.id) + '&friendUserId=' + encodeURIComponent(friendUserId));
+        if (res && res.typing) {
+            subtitleEl.innerHTML = '<i class="fa-solid fa-ellipsis"></i> Typing...';
+        } else {
+            subtitleEl.textContent = 'Connected - say hi!';
+        }
+    } catch (e) { }
+}
+
 function handleFriendsChatInput(event) {
+    if (friendsTypingTimer) clearTimeout(friendsTypingTimer);
+    emitFriendsTyping(true);
+    friendsTypingTimer = setTimeout(function () { emitFriendsTyping(false); }, 1200);
     if (!event) return;
     if (event.key === 'Enter') {
         event.preventDefault();
@@ -2452,6 +2766,7 @@ async function logoutUser() {
 
     currentUser = null;
     currentUsername = "Guest";
+    adminPanelUnlocked = false;
 
     var sidebarDash = document.getElementById("sidebar-dashboard");
     if (sidebarDash) {
@@ -2610,33 +2925,56 @@ function createOwnedProjectCard(room) {
     return div;
 }
 
+var pendingDeployRoom = null;
+var pendingRollbackDeploymentId = null;
+var currentDeploymentCommentsId = null;
+var currentDeploymentCommentsSlug = null;
+var lastOpenedDeploymentSlug = '';
+
+function buildDefaultSlug(name) {
+    return String(name || 'project').toLowerCase().replace(/[^a-z0-9\-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+}
+
+function openDeployProjectModal(room) {
+    pendingDeployRoom = room || null;
+    var slugInput = document.getElementById('deploy-slug-input');
+    var isPublicInput = document.getElementById('deploy-public-checkbox');
+    var roomDisplay = document.getElementById('deploy-project-name-display');
+    if (!pendingDeployRoom || !slugInput || !isPublicInput || !roomDisplay) return;
+    roomDisplay.value = String(pendingDeployRoom.id || '');
+    slugInput.value = buildDefaultSlug(pendingDeployRoom.id);
+    isPublicInput.checked = true;
+    openModal('deploy-project-modal');
+}
+
 async function deployProject(room) {
     if (!currentUser) return showToast("Please login first", "error");
-    var slugDefault = String(room && room.id ? room.id : 'project')
-        .toLowerCase()
-        .replace(/[^a-z0-9\-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 60);
-    var slugInput = prompt('Custom slug (URL /p/<slug>)', slugDefault);
-    if (slugInput === null) return;
-    var slug = String(slugInput || '').trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    openDeployProjectModal(room);
+}
+
+async function submitDeployProjectModal() {
+    if (!currentUser) return showToast("Please login first", "error");
+    if (!pendingDeployRoom) return showToast('No project selected', 'error');
+    var slugInput = document.getElementById('deploy-slug-input');
+    var isPublicInput = document.getElementById('deploy-public-checkbox');
+    if (!slugInput || !isPublicInput) return;
+    var slug = String(slugInput.value || '').trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
     if (!slug) return showToast('Slug is required', 'error');
-    var isPublic = confirm('Make this deployment public?\nOK = Public, Cancel = Private');
     try {
         toggleLoading(true);
-        var data = await safeFetch('/api/deploy-project', {
+        await safeFetch('/api/deploy-project', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                roomId: room.id,
+                roomId: pendingDeployRoom.id,
                 userId: currentUser.id,
                 slug: slug,
-                isPublic: isPublic
+                isPublic: !!isPublicInput.checked
             })
         });
+        closeModal('deploy-project-modal');
         showToast('Project deployed successfully', 'success');
-        try { loadDeployDashboard(); } catch (e2) { }
-        return data;
+        loadDeployDashboard();
     } catch (e) {
         showToast('Deploy failed: ' + (e.message || 'Unknown error'), 'error');
     } finally {
@@ -2646,14 +2984,40 @@ async function deployProject(room) {
 
 async function rollbackDeployment(deploymentId) {
     if (!currentUser) return showToast("Please login first", "error");
-    var versionId = prompt('Enter version id to rollback to');
-    if (!versionId) return;
+    var versions = [];
     try {
-        await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/rollback', {
+        versions = await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/versions?uid=' + encodeURIComponent(currentUser.id));
+    } catch (e) {
+        showToast('Could not load deployment history', 'error');
+        return;
+    }
+    if (!versions || !versions.length) return showToast('No version history found for this deployment', 'error');
+    var select = document.getElementById('rollback-version-select');
+    if (!select) return;
+    select.innerHTML = '';
+    versions.forEach(function (v) {
+        var opt = document.createElement('option');
+        opt.value = String(v.id);
+        opt.textContent = 'v' + v.version_number + ' - ' + formatDeployDate(v.created_at);
+        select.appendChild(opt);
+    });
+    pendingRollbackDeploymentId = deploymentId;
+    openModal('rollback-deployment-modal');
+}
+
+async function submitRollbackDeploymentModal() {
+    if (!currentUser) return showToast("Please login first", "error");
+    if (!pendingRollbackDeploymentId) return;
+    var select = document.getElementById('rollback-version-select');
+    var versionId = select ? String(select.value || '') : '';
+    if (!versionId) return showToast('Select a version', 'error');
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(pendingRollbackDeploymentId) + '/rollback', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: currentUser.id, versionId: versionId })
         });
+        closeModal('rollback-deployment-modal');
         showToast('Rollback successful', 'success');
         loadDeployDashboard();
     } catch (e) {
@@ -2693,7 +3057,18 @@ async function setDeploymentStatus(deploymentId, status) {
 
 function openDeploymentSlug(slug) {
     if (!slug) return;
-    window.open('/p/' + encodeURIComponent(slug), '_blank');
+    lastOpenedDeploymentSlug = String(slug);
+    var titleEl = document.getElementById('deployment-browser-title');
+    var frame = document.getElementById('deployment-browser-frame');
+    if (!frame) return;
+    if (titleEl) titleEl.textContent = 'Deployment Browser - /p/' + String(slug);
+    frame.src = '/p/' + encodeURIComponent(slug);
+    openModal('deployment-browser-modal');
+}
+
+function openDeploymentBrowserFromToolbar() {
+    if (!lastOpenedDeploymentSlug) return showToast('Open a deployment first', 'warning');
+    openDeploymentSlug(lastOpenedDeploymentSlug);
 }
 
 async function loadDeployDashboard() {
@@ -2711,7 +3086,7 @@ async function loadDeployDashboard() {
         } else {
             myProjects.forEach(function (project) {
                 var div = document.createElement("div");
-                div.className = "project-card";
+                div.className = "project-card deployment-card";
                 var status = deploymentStatusBadge(project.status);
                 var visibility = project.is_public ? 'Public' : 'Private';
                 div.innerHTML =
@@ -2722,33 +3097,34 @@ async function loadDeployDashboard() {
                     "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Last deployed: " + escapeHtml(formatDeployDate(project.last_deployed_at)) + "</p>" +
                     "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>";
 
+                var actions = document.createElement("div");
+                actions.className = "deployment-actions";
+
                 var openBtn = document.createElement("button");
-                openBtn.className = "deploy-btn";
-                openBtn.style.right = "8px";
+                openBtn.className = "action-btn secondary deployment-action-btn";
                 openBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i> Open';
                 openBtn.onclick = function (e) { e.stopPropagation(); openDeploymentSlug(project.slug); };
-                div.appendChild(openBtn);
+                actions.appendChild(openBtn);
 
                 var rollbackBtn = document.createElement("button");
-                rollbackBtn.className = "deploy-btn";
-                rollbackBtn.style.right = "78px";
+                rollbackBtn.className = "action-btn secondary deployment-action-btn";
                 rollbackBtn.innerHTML = '<i class="fa-solid fa-clock-rotate-left"></i> Rollback';
                 rollbackBtn.onclick = function (e) { e.stopPropagation(); rollbackDeployment(project.id); };
-                div.appendChild(rollbackBtn);
+                actions.appendChild(rollbackBtn);
 
                 var visibilityBtn = document.createElement("button");
-                visibilityBtn.className = "deploy-btn";
-                visibilityBtn.style.right = "178px";
+                visibilityBtn.className = "action-btn secondary deployment-action-btn";
                 visibilityBtn.innerHTML = project.is_public ? '<i class="fa-solid fa-eye-slash"></i> Private' : '<i class="fa-solid fa-eye"></i> Public';
                 visibilityBtn.onclick = function (e) { e.stopPropagation(); setDeploymentVisibility(project.id, !project.is_public); };
-                div.appendChild(visibilityBtn);
+                actions.appendChild(visibilityBtn);
 
                 var hideBtn = document.createElement("button");
-                hideBtn.className = "delete-btn";
-                hideBtn.style.right = "288px";
+                hideBtn.className = "action-btn secondary deployment-action-btn";
                 hideBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Undeploy';
                 hideBtn.onclick = function (e) { e.stopPropagation(); setDeploymentStatus(project.id, 'undeployed'); };
-                div.appendChild(hideBtn);
+                actions.appendChild(hideBtn);
+
+                div.appendChild(actions);
 
                 div.onclick = function () { openDeploymentSlug(project.slug); };
                 myGrid.appendChild(div);
@@ -2763,31 +3139,123 @@ async function loadDeployDashboard() {
         }
         projects.forEach(function (project) {
             var div = document.createElement("div");
-            div.className = "project-card online-project-card";
+            div.className = "project-card online-project-card deployment-card community-post";
             div.dataset.deploymentId = project.id;
             div.innerHTML =
                 "<h4><i class='fa-solid fa-globe'></i> " + escapeHtml(project.project_name || project.room_id || 'Untitled') + "</h4>" +
                 "<p>" + escapeHtml(project.description || "No description") + "</p>" +
                 "<p style='margin-top:8px;font-size:12px;color:#64748b;'>/" + "p/" + escapeHtml(project.slug || '') + "</p>" +
                 "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Version: " + escapeHtml(project.current_version || 1) + " | Last deployed: " + escapeHtml(formatDeployDate(project.last_deployed_at)) + "</p>" +
-                "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>";
+                "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>" +
+                "<div class='deployment-engagement' id='deployment-engagement-" + escapeHtml(project.id) + "' style='margin-top:10px;font-size:12px;color:#64748b;'>Loading likes/comments...</div>";
             var openBtn = document.createElement("button");
-            openBtn.className = "deploy-btn";
+            openBtn.className = "action-btn secondary deployment-action-btn";
             openBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i> Open Browser';
             openBtn.title = 'Open browser-only preview';
             openBtn.onclick = function (e) {
                 e.stopPropagation();
                 openDeploymentSlug(project.slug);
             };
-            div.appendChild(openBtn);
+            var actions = document.createElement('div');
+            actions.className = 'deployment-actions';
+            actions.appendChild(openBtn);
+            div.appendChild(actions);
             div.onclick = function () {
                 openDeploymentSlug(project.slug);
             };
             publicGrid.appendChild(div);
+            try { loadDeploymentEngagement(project.id); } catch (engErr) { }
         });
     } catch (e) {
         myGrid.innerHTML = '<p style="color:red">Failed to load deployments.</p>';
         publicGrid.innerHTML = '<p style="color:red">Failed to load online projects.</p>';
+    }
+}
+
+async function loadDeploymentEngagement(deploymentId) {
+    var el = document.getElementById('deployment-engagement-' + deploymentId);
+    if (!el) return;
+    try {
+        var uid = currentUser && currentUser.id ? String(currentUser.id) : '';
+        var data = await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/engagement?uid=' + encodeURIComponent(uid));
+        var liked = !!data.likedByCurrentUser;
+        el.innerHTML = '' +
+            '<button class="action-btn secondary" style="padding:6px 10px;font-size:12px;" onclick="toggleDeploymentLike(event,\'' + escapeHtml(deploymentId) + '\')">' +
+            (liked ? '<i class="fa-solid fa-heart"></i> Liked' : '<i class="fa-regular fa-heart"></i> Like') +
+            '</button> ' +
+            '<button class="action-btn secondary" style="padding:6px 10px;font-size:12px;" onclick="openDeploymentComments(event,\'' + escapeHtml(deploymentId) + '\')">' +
+            '<i class="fa-regular fa-comment"></i> Comment' +
+            '</button>' +
+            '<span style="margin-left:8px;">Likes: ' + escapeHtml(data.likes || 0) + ' | Comments: ' + escapeHtml(data.comments || 0) + '</span>';
+    } catch (e) {
+        el.innerHTML = 'Likes/comments unavailable';
+    }
+}
+
+async function toggleDeploymentLike(event, deploymentId) {
+    if (event) event.stopPropagation();
+    if (!currentUser) return showToast('Please login first', 'error');
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/like-toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id })
+        });
+        await loadDeploymentEngagement(deploymentId);
+    } catch (e) {
+        showToast('Like action failed', 'error');
+    }
+}
+
+async function openDeploymentComments(event, deploymentId) {
+    if (event) event.stopPropagation();
+    if (!currentUser) return showToast('Please login first', 'error');
+    currentDeploymentCommentsId = deploymentId;
+    try {
+        var comments = await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/comments');
+        renderDeploymentComments(comments || []);
+        openModal('deployment-comments-modal');
+    } catch (e) {
+        showToast('Comment action failed', 'error');
+    }
+}
+
+function renderDeploymentComments(comments) {
+    var list = document.getElementById('deployment-comments-list');
+    if (!list) return;
+    if (!comments || !comments.length) {
+        list.innerHTML = '<div style="color:var(--text-muted);padding:8px;">No comments yet.</div>';
+        return;
+    }
+    list.innerHTML = comments.map(function (c) {
+        return '<div style="border-bottom:1px solid var(--border-color);padding:8px 4px;">' +
+            '<div style="font-weight:600;font-size:12px;">' + escapeHtml(c.username || 'User') + ' <span style="color:var(--text-muted);font-weight:400;">' + escapeHtml(formatDeployDate(c.created_at)) + '</span></div>' +
+            '<div style="font-size:13px;margin-top:4px;">' + escapeHtml(c.comment || '') + '</div>' +
+            '</div>';
+    }).join('');
+}
+
+async function submitDeploymentComment() {
+    if (!currentDeploymentCommentsId || !currentUser) return;
+    var input = document.getElementById('deployment-comment-input');
+    var text = input ? String(input.value || '').trim() : '';
+    if (!text) return showToast('Write a comment first', 'warning');
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(currentDeploymentCommentsId) + '/comments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                username: currentUser.username || currentUser.email || 'User',
+                comment: text
+            })
+        });
+        if (input) input.value = '';
+        var comments = await safeFetch('/api/deployments/' + encodeURIComponent(currentDeploymentCommentsId) + '/comments');
+        renderDeploymentComments(comments || []);
+        await loadDeploymentEngagement(currentDeploymentCommentsId);
+    } catch (e) {
+        showToast('Comment action failed', 'error');
     }
 }
 
@@ -4870,6 +5338,9 @@ var TeamChat = {
             input.value = "";
             input.focus();
         }
+        if (socket && socket.connected && currentRoomId) {
+            socket.emit('chat-typing', { roomId: currentRoomId, username: currentUsername, isTyping: false });
+        }
     },
 
     clearMessages: function () {
@@ -4883,6 +5354,15 @@ var TeamChat = {
 };
 
 function handleChatInput(event) {
+    if (socket && socket.connected && currentRoomId) {
+        socket.emit('chat-typing', { roomId: currentRoomId, username: currentUsername, isTyping: true });
+        if (teamTypingEmitTimer) clearTimeout(teamTypingEmitTimer);
+        teamTypingEmitTimer = setTimeout(function () {
+            if (socket && socket.connected && currentRoomId) {
+                socket.emit('chat-typing', { roomId: currentRoomId, username: currentUsername, isTyping: false });
+            }
+        }, 1200);
+    }
     if (event.key === "Enter") {
         var input = document.getElementById("team-chat-input");
         if (input) {
@@ -6287,6 +6767,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initEnhancedFeatures();
     setupSidebar();
     setupSidebarNavigation();
+    initAdminUnlockFlow();
     initIdeMobileShell();
 });
 
@@ -6386,12 +6867,44 @@ function setupSidebarNavigation() {
     var logoutNavItem = document.querySelector('.nav-item.danger-item');
     if (logoutNavItem) logoutNavItem.addEventListener('click', function () { logoutUser(); });
 
-    var adminNavItem = document.getElementById('admin-announcements-nav-item');
+    var adminNavItem = document.getElementById('admin-panel-nav-item');
     if (adminNavItem) {
         adminNavItem.addEventListener('click', async function () {
-            openAdminAnnouncements();
+            if (!canAccessAdminPanel()) {
+                showToast('Access denied. Admin account only.', 'error');
+                return;
+            }
+            switchDashboardTab('admin');
         });
     }
+
+    var adminAnnouncementBtn = document.getElementById('open-admin-announcements-btn');
+    if (adminAnnouncementBtn) {
+        adminAnnouncementBtn.addEventListener('click', function () { openAdminAnnouncements(); });
+    }
+
+    var adminSectionItems = document.querySelectorAll('[data-admin-section]');
+    adminSectionItems.forEach(function (item) {
+        item.addEventListener('click', function () {
+            var section = item.getAttribute('data-admin-section');
+            if (section) {
+                switchAdminPanelSection(section);
+                if (section === 'users') loadAdminUsersSection();
+                if (section === 'deployments') loadAdminDeploymentsSection();
+                if (section === 'analytics') loadAdminAnalyticsSection();
+                if (section === 'security') loadAdminSecuritySection();
+            }
+        });
+    });
+
+    var deploySubmitBtn = document.getElementById('deploy-project-submit-btn');
+    if (deploySubmitBtn) deploySubmitBtn.addEventListener('click', submitDeployProjectModal);
+
+    var rollbackSubmitBtn = document.getElementById('rollback-version-submit-btn');
+    if (rollbackSubmitBtn) rollbackSubmitBtn.addEventListener('click', submitRollbackDeploymentModal);
+
+    var deploymentCommentSubmitBtn = document.getElementById('deployment-comment-submit-btn');
+    if (deploymentCommentSubmitBtn) deploymentCommentSubmitBtn.addEventListener('click', submitDeploymentComment);
 
     var profileBtn = document.getElementById('profile-btn');
     if (profileBtn) profileBtn.addEventListener('click', function () { openProfileModal(); });

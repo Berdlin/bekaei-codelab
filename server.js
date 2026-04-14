@@ -4,6 +4,7 @@ const http = require('http');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const path = require('path');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const nodemailer = require('nodemailer');
 const fsPromises = require('fs/promises');
@@ -246,6 +247,13 @@ async function storeHelpRequestFallback(payload) {
     await fsPromises.appendFile(HELP_REQUESTS_LOG_PATH, line, 'utf8');
 }
 
+const friendsTypingState = new Map();
+function friendsTypingKey(a, b) {
+    const left = String(a || '');
+    const right = String(b || '');
+    return [left, right].sort().join('::');
+}
+
 app.get('/api/admin/me', requireAuthenticatedUser, (req, res) => {
     const email = normalizeEmail(req.authUser && req.authUser.email);
     res.json({
@@ -359,6 +367,119 @@ app.post('/api/admin/send-announcement-bypass', async (req, res) => {
     } catch (e) {
         res.status(500).json({ error: e.message || 'Failed to send announcement' });
     }
+});
+
+app.get('/api/admin/platform-metrics', requireAuthenticatedUser, requireAdminUser, async (req, res) => {
+    try {
+        const db = supabaseAdmin || supabase;
+        const countTable = async (table) => {
+            const { count, error } = await db.from(table).select('*', { count: 'exact', head: true });
+            if (error) throw error;
+            return count || 0;
+        };
+        const [rooms, deployments, deploymentComments, deploymentLikes, posts, users] = await Promise.all([
+            countTable('rooms'),
+            countTable('deployed_projects'),
+            countTable('deployment_comments'),
+            countTable('deployment_likes'),
+            countTable('posts'),
+            countTable('users')
+        ]);
+        res.json({
+            rooms,
+            deployments,
+            deploymentComments,
+            deploymentLikes,
+            posts,
+            users,
+            uptimeSeconds: Math.floor(process.uptime()),
+            smtpConfigured: hasSmtpConfig(),
+            serviceRoleConfigured: !!supabaseAdmin
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/admin/users-list', requireAuthenticatedUser, requireAdminUser, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(500).json({ error: 'SUPABASE_SERVICE_ROLE_KEY is required' });
+        const q = String(req.query.q || '').trim().toLowerCase();
+        const perPage = Math.max(1, Math.min(parseInt(req.query.limit || '30', 10), 100));
+        const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage });
+        if (error) return res.status(500).json({ error: error.message });
+        let users = (data && data.users) ? data.users : [];
+        if (q) {
+            users = users.filter((u) => String(u.email || '').toLowerCase().includes(q));
+        }
+        users = users.map((u) => ({
+            id: u.id,
+            email: u.email,
+            banned: !!(u.user_metadata && u.user_metadata.banned),
+            created_at: u.created_at
+        }));
+        res.json({ users });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/admin/users/:id/ban-toggle', requireAuthenticatedUser, requireAdminUser, async (req, res) => {
+    try {
+        if (!supabaseAdmin) return res.status(500).json({ error: 'SUPABASE_SERVICE_ROLE_KEY is required' });
+        const userId = String(req.params.id || '').trim();
+        const banned = !!req.body.banned;
+        if (!userId) return res.status(400).json({ error: 'user id is required' });
+        const { data: target, error: getError } = await supabaseAdmin.auth.admin.getUserById(userId);
+        if (getError || !target || !target.user) return res.status(404).json({ error: 'User not found' });
+        const currentMeta = target.user.user_metadata || {};
+        const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+            user_metadata: { ...currentMeta, banned: banned }
+        });
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true, banned });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/admin/deployments-list', requireAuthenticatedUser, requireAdminUser, async (req, res) => {
+    try {
+        const db = supabaseAdmin || supabase;
+        const { data, error } = await db
+            .from('deployed_projects')
+            .select('id, project_name, owner_id, slug, status, is_public, updated_at, total_opens, unique_opens')
+            .order('updated_at', { ascending: false })
+            .limit(100);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ deployments: data || [] });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/admin/deployments/:id/status', requireAuthenticatedUser, requireAdminUser, async (req, res) => {
+    try {
+        const db = supabaseAdmin || supabase;
+        const id = String(req.params.id || '').trim();
+        const status = String(req.body.status || '').toLowerCase();
+        if (!id) return res.status(400).json({ error: 'id is required' });
+        if (!['active', 'hidden', 'undeployed'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+        const { error } = await db.from('deployed_projects').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/admin/security-state', requireAuthenticatedUser, requireAdminUser, async (req, res) => {
+    res.json({
+        serviceRoleConfigured: !!supabaseAdmin,
+        smtpConfigured: hasSmtpConfig(),
+        rejectUnauthorizedTls: SMTP_REJECT_UNAUTHORIZED,
+        serverTime: new Date().toISOString()
+    });
 });
 
 app.post('/api/help-request', async (req, res) => {
@@ -989,10 +1110,47 @@ app.post('/api/friends/messages/send', async (req, res) => {
 
         if (insertErr) return res.status(500).json({ error: insertErr.message });
 
+        // Clear typing state once a message is sent.
+        friendsTypingState.delete(friendsTypingKey(fromUserId, toUserId));
+
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+app.post('/api/friends/typing', async (req, res) => {
+    const { fromUserId, toUserId, isTyping } = req.body || {};
+    if (!fromUserId || !toUserId) return res.status(400).json({ error: 'fromUserId and toUserId are required' });
+    const key = friendsTypingKey(fromUserId, toUserId);
+    try {
+        if (isTyping) {
+            friendsTypingState.set(key, {
+                typingUserId: String(fromUserId),
+                expiresAt: Date.now() + 5000
+            });
+        } else {
+            friendsTypingState.delete(key);
+        }
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/friends/typing', async (req, res) => {
+    const userId = String(req.query.userId || '').trim();
+    const friendUserId = String(req.query.friendUserId || '').trim();
+    if (!userId || !friendUserId) return res.status(400).json({ error: 'userId and friendUserId are required' });
+    const key = friendsTypingKey(userId, friendUserId);
+    const state = friendsTypingState.get(key);
+    if (!state || Date.now() > Number(state.expiresAt || 0)) {
+        friendsTypingState.delete(key);
+        return res.json({ typing: false, typingUserId: null });
+    }
+    const typingUserId = String(state.typingUserId || '');
+    const isTyping = typingUserId && typingUserId !== userId;
+    res.json({ typing: !!isTyping, typingUserId: typingUserId || null });
 });
 
 app.post('/api/friends/messages/hide', async (req, res) => {
@@ -1378,21 +1536,55 @@ function buildPreviewHtmlFromFiles(files) {
     if (!html) {
         return '<!doctype html><html><head><meta charset="utf-8"><title>Preview</title></head><body><h2>No index.html found</h2></body></html>';
     }
-    if (css) {
-        html = html.replace(/<link[^>]*href=["']style\.css["'][^>]*>/i, `<style>\n${css}\n</style>`);
-    }
-    if (js) {
-        html = html.replace(/<script[^>]*src=["']script\.js["'][^>]*><\/script>/i, `<script>\n${js}\n<\/script>`);
-    }
+    if (css) html = html.replace(/<link[^>]*href=["']style\.css["'][^>]*>/i, `<style>\n${css}\n</style>`);
+    if (js) html = html.replace(/<script[^>]*src=["']script\.js["'][^>]*><\/script>/i, `<script>\n${js}\n<\/script>`);
     return html;
 }
 
+function getClientIp(req) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    const realIp = String(req.headers['x-real-ip'] || '').trim();
+    const socketIp = String((req.socket && req.socket.remoteAddress) || '').trim();
+    return forwarded || realIp || socketIp || 'unknown';
+}
+
+function buildVisitorHash(req) {
+    const ip = getClientIp(req);
+    const ua = String(req.headers['user-agent'] || 'unknown');
+    return crypto.createHash('sha256').update(`${ip}|${ua}`).digest('hex');
+}
+
+function normalizeSlug(raw) {
+    return String(raw || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9\-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80);
+}
+
+async function requireOwnedDeployment(deploymentId, userId) {
+    const db = supabaseAdmin || supabase;
+    const { data, error } = await db
+        .from('deployed_projects')
+        .select('*')
+        .eq('id', deploymentId)
+        .single();
+    if (error || !data) throw new Error('Deployment not found');
+    if (String(data.owner_id) !== String(userId)) throw new Error('Unauthorized');
+    return data;
+}
+
 app.post('/api/deploy-project', async (req, res) => {
-    const { roomId, userId } = req.body || {};
+    const { roomId, userId, slug, isPublic } = req.body || {};
     if (!roomId || !userId) return res.status(400).json({ error: 'roomId and userId are required' });
+    const normalizedSlug = normalizeSlug(slug || roomId);
+    if (!normalizedSlug) return res.status(400).json({ error: 'Valid slug is required' });
 
     try {
-        const { data: room, error: roomError } = await supabase
+        const db = supabaseAdmin || supabase;
+        const { data: room, error: roomError } = await db
             .from('rooms')
             .select('id, owner_id, description')
             .eq('id', roomId)
@@ -1400,49 +1592,86 @@ app.post('/api/deploy-project', async (req, res) => {
         if (roomError || !room) return res.status(404).json({ error: 'Project not found' });
         if (String(room.owner_id) !== String(userId)) return res.status(403).json({ error: 'Only owner can deploy this project' });
 
-        const { data: files, error: filesError } = await supabase
+        const { data: files, error: filesError } = await db
             .from('files')
             .select('name, content, lang')
             .eq('room_id', roomId);
         if (filesError) return res.status(500).json({ error: filesError.message });
 
         const previewHtml = buildPreviewHtmlFromFiles(files || []);
-        const deploymentId = String(roomId);
         const now = new Date().toISOString();
+
+        const { data: existingBySlug, error: slugError } = await db
+            .from('deployed_projects')
+            .select('id, owner_id')
+            .eq('slug', normalizedSlug)
+            .maybeSingle();
+        if (slugError && slugError.code !== 'PGRST116') return res.status(500).json({ error: slugError.message });
+        if (existingBySlug && String(existingBySlug.owner_id) !== String(userId)) {
+            return res.status(409).json({ error: 'Slug already in use. Choose another slug.' });
+        }
+
+        const { data: existingDeployment } = await db
+            .from('deployed_projects')
+            .select('*')
+            .eq('room_id', roomId)
+            .eq('owner_id', userId)
+            .maybeSingle();
+
+        const currentVersion = existingDeployment ? Number(existingDeployment.current_version || 1) + 1 : 1;
+        const deploymentId = existingDeployment ? existingDeployment.id : `${userId}_${roomId}`;
+
         const payload = {
             id: deploymentId,
             room_id: roomId,
             owner_id: userId,
             project_name: roomId,
             description: room.description || '',
+            slug: normalizedSlug,
+            is_public: !!isPublic,
+            status: 'active',
+            current_version: currentVersion,
             preview_html: previewHtml,
+            deploy_count: existingDeployment ? Number(existingDeployment.deploy_count || 0) + 1 : 1,
+            last_deployed_at: now,
             updated_at: now,
-            created_at: now
+            created_at: existingDeployment ? existingDeployment.created_at : now
         };
 
-        const { data: deployed, error: deployError } = await supabase
+        const { data: deployed, error: deployError } = await db
             .from('deployed_projects')
             .upsert([payload], { onConflict: 'id' })
             .select('*')
             .single();
+        if (deployError) return res.status(500).json({ error: deployError.message });
 
-        if (deployError) {
-            return res.status(500).json({
-                error: deployError.message,
-                hint: 'Create table deployed_projects(id text primary key, room_id text, owner_id uuid, project_name text, description text, preview_html text, created_at timestamptz, updated_at timestamptz)'
-            });
-        }
+        const { error: versionError } = await db
+            .from('deployment_versions')
+            .insert([{
+                deployment_id: deploymentId,
+                version_number: currentVersion,
+                preview_html: previewHtml,
+                files_snapshot: files || [],
+                created_at: now
+            }]);
+        if (versionError) return res.status(500).json({ error: versionError.message });
+
         res.json({ success: true, deployment: deployed });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        res.status(500).json({ error: e.message, hint: 'Run supabase/deployments.sql in your Supabase SQL editor.' });
     }
 });
 
-app.get('/api/deployed-projects', async (req, res) => {
+app.get('/api/deployments/mine', async (req, res) => {
+    const uid = String(req.query.uid || '').trim();
+    if (!uid) return res.json([]);
     try {
-        const { data, error } = await supabase
+        const db = supabaseAdmin || supabase;
+        const { data, error } = await db
             .from('deployed_projects')
-            .select('id, room_id, owner_id, project_name, description, updated_at, created_at')
+            .select('*')
+            .eq('owner_id', uid)
+            .neq('status', 'undeployed')
             .order('updated_at', { ascending: false });
         if (error) return res.status(500).json({ error: error.message });
         res.json(data || []);
@@ -1451,11 +1680,135 @@ app.get('/api/deployed-projects', async (req, res) => {
     }
 });
 
+app.get('/api/deployments/public', async (req, res) => {
+    try {
+        const db = supabaseAdmin || supabase;
+        const { data, error } = await db
+            .from('deployed_projects')
+            .select('*')
+            .eq('is_public', true)
+            .eq('status', 'active')
+            .order('updated_at', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Backward-compatible route used by older frontend.
+app.get('/api/deployed-projects', async (req, res) => {
+    try {
+        const db = supabaseAdmin || supabase;
+        const { data, error } = await db
+            .from('deployed_projects')
+            .select('*')
+            .eq('is_public', true)
+            .eq('status', 'active')
+            .order('updated_at', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/deployments/:id/versions', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const uid = String(req.query.uid || '').trim();
+    if (!deploymentId || !uid) return res.status(400).json({ error: 'id and uid are required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        await requireOwnedDeployment(deploymentId, uid);
+        const { data, error } = await db
+            .from('deployment_versions')
+            .select('id, version_number, created_at')
+            .eq('deployment_id', deploymentId)
+            .order('version_number', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data || []);
+    } catch (e) {
+        res.status(403).json({ error: e.message });
+    }
+});
+
+app.post('/api/deployments/:id/rollback', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const { userId, versionId } = req.body || {};
+    if (!deploymentId || !userId || !versionId) return res.status(400).json({ error: 'id, userId, versionId are required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        const deployment = await requireOwnedDeployment(deploymentId, userId);
+        const { data: version, error: verError } = await db
+            .from('deployment_versions')
+            .select('*')
+            .eq('id', versionId)
+            .eq('deployment_id', deploymentId)
+            .single();
+        if (verError || !version) return res.status(404).json({ error: 'Version not found' });
+
+        const now = new Date().toISOString();
+        const { error: updError } = await db
+            .from('deployed_projects')
+            .update({
+                preview_html: version.preview_html,
+                current_version: version.version_number,
+                status: 'active',
+                updated_at: now,
+                last_deployed_at: now
+            })
+            .eq('id', deploymentId);
+        if (updError) return res.status(500).json({ error: updError.message });
+        res.json({ success: true, deploymentId: deployment.id, version: version.version_number });
+    } catch (e) {
+        res.status(403).json({ error: e.message });
+    }
+});
+
+app.post('/api/deployments/:id/visibility', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const { userId, isPublic } = req.body || {};
+    if (!deploymentId || !userId) return res.status(400).json({ error: 'id and userId are required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        await requireOwnedDeployment(deploymentId, userId);
+        const { error } = await db
+            .from('deployed_projects')
+            .update({ is_public: !!isPublic, updated_at: new Date().toISOString() })
+            .eq('id', deploymentId);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(403).json({ error: e.message });
+    }
+});
+
+app.post('/api/deployments/:id/status', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const { userId, status } = req.body || {};
+    const s = String(status || '').toLowerCase();
+    if (!deploymentId || !userId) return res.status(400).json({ error: 'id and userId are required' });
+    if (!['active', 'hidden', 'undeployed'].includes(s)) return res.status(400).json({ error: 'Invalid status' });
+    try {
+        const db = supabaseAdmin || supabase;
+        await requireOwnedDeployment(deploymentId, userId);
+        const { error } = await db
+            .from('deployed_projects')
+            .update({ status: s, updated_at: new Date().toISOString() })
+            .eq('id', deploymentId);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(403).json({ error: e.message });
+    }
+});
+
 app.get('/api/deployed-project/:id/preview', async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).send('Missing deployment id');
     try {
-        const { data, error } = await supabase
+        const db = supabaseAdmin || supabase;
+        const { data, error } = await db
             .from('deployed_projects')
             .select('preview_html')
             .eq('id', id)
@@ -1465,6 +1818,154 @@ app.get('/api/deployed-project/:id/preview', async (req, res) => {
         res.send(String(data.preview_html || '<!doctype html><html><body><h2>No preview available</h2></body></html>'));
     } catch (e) {
         res.status(500).send('Preview failed: ' + e.message);
+    }
+});
+
+app.get('/p/:slug', async (req, res) => {
+    const slug = normalizeSlug(req.params.slug || '');
+    if (!slug) return res.status(404).send('Not found');
+    try {
+        const db = supabaseAdmin || supabase;
+        const { data: deployment, error } = await db
+            .from('deployed_projects')
+            .select('*')
+            .eq('slug', slug)
+            .single();
+        if (error || !deployment) return res.status(404).send('Project not found');
+        if (!deployment.is_public || String(deployment.status) !== 'active') return res.status(403).send('Project is not publicly available');
+
+        const viewerKey = buildVisitorHash(req);
+        const today = new Date().toISOString().slice(0, 10);
+
+        const { error: viewInsertError } = await db.from('deployment_views').insert([{
+            deployment_id: deployment.id,
+            viewer_key: viewerKey,
+            viewed_on: today
+        }]);
+        if (viewInsertError && viewInsertError.code !== '23505') {
+            console.warn('deployment view insert failed:', viewInsertError.message);
+        }
+
+        const { count: totalCount } = await db
+            .from('deployment_views')
+            .select('*', { count: 'exact', head: true })
+            .eq('deployment_id', deployment.id);
+        const { data: uniqueRows } = await db
+            .from('deployment_views')
+            .select('viewer_key')
+            .eq('deployment_id', deployment.id);
+        const uniqueCount = new Set((uniqueRows || []).map(r => String(r.viewer_key || ''))).size;
+
+        await db
+            .from('deployed_projects')
+            .update({
+                total_opens: totalCount || 0,
+                unique_opens: uniqueCount || 0,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', deployment.id);
+
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(String(deployment.preview_html || '<!doctype html><html><body><h2>No preview available</h2></body></html>'));
+    } catch (e) {
+        res.status(500).send('Preview failed: ' + e.message);
+    }
+});
+
+app.get('/api/deployments/:id/engagement', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const uid = String(req.query.uid || '').trim();
+    if (!deploymentId) return res.status(400).json({ error: 'id is required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        const { count: likesCount, error: likesCountError } = await db
+            .from('deployment_likes')
+            .select('*', { count: 'exact', head: true })
+            .eq('deployment_id', deploymentId);
+        if (likesCountError) return res.status(500).json({ error: likesCountError.message });
+        const { count: commentsCount, error: commentsCountError } = await db
+            .from('deployment_comments')
+            .select('*', { count: 'exact', head: true })
+            .eq('deployment_id', deploymentId);
+        if (commentsCountError) return res.status(500).json({ error: commentsCountError.message });
+        let likedByCurrentUser = false;
+        if (uid) {
+            const { data: myLike } = await db
+                .from('deployment_likes')
+                .select('id')
+                .eq('deployment_id', deploymentId)
+                .eq('user_id', uid)
+                .maybeSingle();
+            likedByCurrentUser = !!myLike;
+        }
+        res.json({ likes: likesCount || 0, comments: commentsCount || 0, likedByCurrentUser: likedByCurrentUser });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/deployments/:id/like-toggle', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const userId = String((req.body && req.body.userId) || '').trim();
+    if (!deploymentId || !userId) return res.status(400).json({ error: 'id and userId are required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        const { data: existing } = await db
+            .from('deployment_likes')
+            .select('id')
+            .eq('deployment_id', deploymentId)
+            .eq('user_id', userId)
+            .maybeSingle();
+        if (existing) {
+            const { error } = await db.from('deployment_likes').delete().eq('id', existing.id);
+            if (error) return res.status(500).json({ error: error.message });
+            return res.json({ success: true, liked: false });
+        }
+        const { error } = await db.from('deployment_likes').insert([{ deployment_id: deploymentId, user_id: userId }]);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true, liked: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/deployments/:id/comments', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    if (!deploymentId) return res.status(400).json({ error: 'id is required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        const { data, error } = await db
+            .from('deployment_comments')
+            .select('id, user_id, username, comment, created_at')
+            .eq('deployment_id', deploymentId)
+            .order('created_at', { ascending: false })
+            .limit(50);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/deployments/:id/comments', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const { userId, username, comment } = req.body || {};
+    if (!deploymentId || !userId || !comment) return res.status(400).json({ error: 'id, userId and comment are required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        const cleanComment = String(comment || '').trim().slice(0, 500);
+        if (!cleanComment) return res.status(400).json({ error: 'Comment cannot be empty' });
+        const payload = {
+            deployment_id: deploymentId,
+            user_id: String(userId),
+            username: String(username || 'User').slice(0, 120),
+            comment: cleanComment
+        };
+        const { data, error } = await db.from('deployment_comments').insert([payload]).select('*').single();
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true, comment: data });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 
@@ -2257,6 +2758,14 @@ io.on('connection', (socket) => {
     socket.on('chat-message', ({ roomId, message, username }) => {
         if (!roomId) return;
         io.to(roomId).emit('chat-message', { user: username, text: message });
+    });
+
+    socket.on('chat-typing', ({ roomId, username, isTyping }) => {
+        if (!roomId) return;
+        socket.to(roomId).emit('chat-typing', {
+            username: username || socket.data.username || 'Anon',
+            isTyping: !!isTyping
+        });
     });
 
     // Stream Monaco text changes for interruption-free collaboration.
