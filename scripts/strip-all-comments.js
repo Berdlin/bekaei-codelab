@@ -57,7 +57,7 @@ function stripHTML(code) {
 
 function stripCSS(code) {
 
-  return code.replace(/\/\*[\s\S]*?\*\
+  return code.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 function walk(dir) {
