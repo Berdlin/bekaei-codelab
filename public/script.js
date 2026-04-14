@@ -1664,6 +1664,9 @@ function switchDashboardTab(tabName) {
     if (tabName === 'settings') {
         try { loadApiKeys(); } catch (e) { console.error('Failed to load API keys:', e); }
     }
+    if (tabName === 'deploy') {
+        try { loadDeployDashboard(); } catch (e) { console.error('Failed to load deploy dashboard:', e); }
+    }
 
     try { closeDashboardSidebar(); } catch (e) { }
 }
@@ -2552,34 +2555,240 @@ async function loadProjects() {
             return;
         }
         rooms.forEach(function (room) {
-            var div = document.createElement("div");
-            div.className = "project-card";
-            div.dataset.roomId = room.id;
-            var lock = (room.is_public === false) ? '<i class="fa-solid fa-lock" title="Private"></i> ' : '';
-            div.innerHTML = "<h4>" + lock + room.id + "</h4><p>" + (room.description || "No description") + "</p>";
-
-            try {
-                var deleteBtn = document.createElement("button");
-                deleteBtn.className = "delete-btn";
-                deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
-                deleteBtn.title = 'Delete project — type project name to confirm (undo available for 5s)';
-                deleteBtn.onclick = function (e) {
-                    e.stopPropagation();
-                    handleDeleteClick(room, div);
-                };
-                div.appendChild(deleteBtn);
-            } catch (e) { }
-
-            div.onclick = function () {
-                if (room.is_public === false) {
-                    enterRoom(room.id, null, true);
-                } else {
-                    enterRoom(room.id);
-                }
-            };
-            grid.appendChild(div);
+            grid.appendChild(createOwnedProjectCard(room));
         });
     } catch (e) { grid.innerHTML = '<p style="color:red">Error loading projects.</p>'; }
+}
+
+function formatDeployDate(ts) {
+    if (!ts) return 'Never';
+    try { return new Date(ts).toLocaleString(); } catch (e) { return String(ts); }
+}
+
+function deploymentStatusBadge(status) {
+    var s = String(status || 'active').toLowerCase();
+    var color = s === 'active' ? '#10b981' : (s === 'hidden' ? '#f59e0b' : '#ef4444');
+    return '<span class="deploy-badge" style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:999px;font-size:11px;margin-left:8px;">' + escapeHtml(s) + '</span>';
+}
+
+function createOwnedProjectCard(room) {
+    var div = document.createElement("div");
+    div.className = "project-card";
+    div.dataset.roomId = room.id;
+    var lock = (room.is_public === false) ? '<i class="fa-solid fa-lock" title="Private"></i> ' : '';
+    div.innerHTML = "<h4>" + lock + room.id + "</h4><p>" + (room.description || "No description") + "</p>";
+
+    try {
+        var deployBtn = document.createElement("button");
+        deployBtn.className = "deploy-btn";
+        deployBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Deploy';
+        deployBtn.title = 'Deploy this project to Online Projects';
+        deployBtn.onclick = function (e) {
+            e.stopPropagation();
+            deployProject(room);
+        };
+        div.appendChild(deployBtn);
+
+        var deleteBtn = document.createElement("button");
+        deleteBtn.className = "delete-btn";
+        deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
+        deleteBtn.title = 'Delete project — type project name to confirm (undo available for 5s)';
+        deleteBtn.onclick = function (e) {
+            e.stopPropagation();
+            handleDeleteClick(room, div);
+        };
+        div.appendChild(deleteBtn);
+    } catch (e) { }
+
+    div.onclick = function () {
+        if (room.is_public === false) {
+            enterRoom(room.id, null, true);
+        } else {
+            enterRoom(room.id);
+        }
+    };
+    return div;
+}
+
+async function deployProject(room) {
+    if (!currentUser) return showToast("Please login first", "error");
+    var slugDefault = String(room && room.id ? room.id : 'project')
+        .toLowerCase()
+        .replace(/[^a-z0-9\-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60);
+    var slugInput = prompt('Custom slug (URL /p/<slug>)', slugDefault);
+    if (slugInput === null) return;
+    var slug = String(slugInput || '').trim().toLowerCase().replace(/[^a-z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    if (!slug) return showToast('Slug is required', 'error');
+    var isPublic = confirm('Make this deployment public?\nOK = Public, Cancel = Private');
+    try {
+        toggleLoading(true);
+        var data = await safeFetch('/api/deploy-project', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                roomId: room.id,
+                userId: currentUser.id,
+                slug: slug,
+                isPublic: isPublic
+            })
+        });
+        showToast('Project deployed successfully', 'success');
+        try { loadDeployDashboard(); } catch (e2) { }
+        return data;
+    } catch (e) {
+        showToast('Deploy failed: ' + (e.message || 'Unknown error'), 'error');
+    } finally {
+        toggleLoading(false);
+    }
+}
+
+async function rollbackDeployment(deploymentId) {
+    if (!currentUser) return showToast("Please login first", "error");
+    var versionId = prompt('Enter version id to rollback to');
+    if (!versionId) return;
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/rollback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id, versionId: versionId })
+        });
+        showToast('Rollback successful', 'success');
+        loadDeployDashboard();
+    } catch (e) {
+        showToast('Rollback failed: ' + (e.message || 'Unknown error'), 'error');
+    }
+}
+
+async function setDeploymentVisibility(deploymentId, isPublic) {
+    if (!currentUser) return showToast("Please login first", "error");
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/visibility', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id, isPublic: !!isPublic })
+        });
+        showToast('Visibility updated', 'success');
+        loadDeployDashboard();
+    } catch (e) {
+        showToast('Update failed: ' + (e.message || 'Unknown error'), 'error');
+    }
+}
+
+async function setDeploymentStatus(deploymentId, status) {
+    if (!currentUser) return showToast("Please login first", "error");
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: currentUser.id, status: status })
+        });
+        showToast('Status updated', 'success');
+        loadDeployDashboard();
+    } catch (e) {
+        showToast('Status update failed: ' + (e.message || 'Unknown error'), 'error');
+    }
+}
+
+function openDeploymentSlug(slug) {
+    if (!slug) return;
+    window.open('/p/' + encodeURIComponent(slug), '_blank');
+}
+
+async function loadDeployDashboard() {
+    var myGrid = document.getElementById("my-deployments-grid");
+    var publicGrid = document.getElementById("public-deployments-grid");
+    if (!myGrid || !publicGrid) return;
+    myGrid.innerHTML = '<div style="color:#666">Loading my deployments...</div>';
+    publicGrid.innerHTML = '<div style="color:#666">Loading online projects...</div>';
+
+    try {
+        var myProjects = await safeFetch('/api/deployments/mine?uid=' + encodeURIComponent(currentUser.id));
+        myGrid.innerHTML = '';
+        if (!myProjects || !myProjects.length) {
+            myGrid.innerHTML = '<p style="color:#666;width:100%;">No deployments yet.</p>';
+        } else {
+            myProjects.forEach(function (project) {
+                var div = document.createElement("div");
+                div.className = "project-card";
+                var status = deploymentStatusBadge(project.status);
+                var visibility = project.is_public ? 'Public' : 'Private';
+                div.innerHTML =
+                    "<h4><i class='fa-solid fa-rocket'></i> " + escapeHtml(project.project_name || project.room_id || 'Untitled') + status + "</h4>" +
+                    "<p>" + escapeHtml(project.description || "No description") + "</p>" +
+                    "<p style='margin-top:8px;font-size:12px;color:#64748b;'>Slug: /p/" + escapeHtml(project.slug || '') + "</p>" +
+                    "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Version: " + escapeHtml(project.current_version || 1) + " | " + visibility + "</p>" +
+                    "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Last deployed: " + escapeHtml(formatDeployDate(project.last_deployed_at)) + "</p>" +
+                    "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>";
+
+                var openBtn = document.createElement("button");
+                openBtn.className = "deploy-btn";
+                openBtn.style.right = "8px";
+                openBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i> Open';
+                openBtn.onclick = function (e) { e.stopPropagation(); openDeploymentSlug(project.slug); };
+                div.appendChild(openBtn);
+
+                var rollbackBtn = document.createElement("button");
+                rollbackBtn.className = "deploy-btn";
+                rollbackBtn.style.right = "78px";
+                rollbackBtn.innerHTML = '<i class="fa-solid fa-clock-rotate-left"></i> Rollback';
+                rollbackBtn.onclick = function (e) { e.stopPropagation(); rollbackDeployment(project.id); };
+                div.appendChild(rollbackBtn);
+
+                var visibilityBtn = document.createElement("button");
+                visibilityBtn.className = "deploy-btn";
+                visibilityBtn.style.right = "178px";
+                visibilityBtn.innerHTML = project.is_public ? '<i class="fa-solid fa-eye-slash"></i> Private' : '<i class="fa-solid fa-eye"></i> Public';
+                visibilityBtn.onclick = function (e) { e.stopPropagation(); setDeploymentVisibility(project.id, !project.is_public); };
+                div.appendChild(visibilityBtn);
+
+                var hideBtn = document.createElement("button");
+                hideBtn.className = "delete-btn";
+                hideBtn.style.right = "288px";
+                hideBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Undeploy';
+                hideBtn.onclick = function (e) { e.stopPropagation(); setDeploymentStatus(project.id, 'undeployed'); };
+                div.appendChild(hideBtn);
+
+                div.onclick = function () { openDeploymentSlug(project.slug); };
+                myGrid.appendChild(div);
+            });
+        }
+
+        var projects = await safeFetch('/api/deployments/public');
+        publicGrid.innerHTML = '';
+        if (!projects || !projects.length) {
+            publicGrid.innerHTML = '<p style="color:#666;width:100%;">No online projects yet.</p>';
+            return;
+        }
+        projects.forEach(function (project) {
+            var div = document.createElement("div");
+            div.className = "project-card online-project-card";
+            div.dataset.deploymentId = project.id;
+            div.innerHTML =
+                "<h4><i class='fa-solid fa-globe'></i> " + escapeHtml(project.project_name || project.room_id || 'Untitled') + "</h4>" +
+                "<p>" + escapeHtml(project.description || "No description") + "</p>" +
+                "<p style='margin-top:8px;font-size:12px;color:#64748b;'>/" + "p/" + escapeHtml(project.slug || '') + "</p>" +
+                "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Version: " + escapeHtml(project.current_version || 1) + " | Last deployed: " + escapeHtml(formatDeployDate(project.last_deployed_at)) + "</p>" +
+                "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>";
+            var openBtn = document.createElement("button");
+            openBtn.className = "deploy-btn";
+            openBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i> Open Browser';
+            openBtn.title = 'Open browser-only preview';
+            openBtn.onclick = function (e) {
+                e.stopPropagation();
+                openDeploymentSlug(project.slug);
+            };
+            div.appendChild(openBtn);
+            div.onclick = function () {
+                openDeploymentSlug(project.slug);
+            };
+            publicGrid.appendChild(div);
+        });
+    } catch (e) {
+        myGrid.innerHTML = '<p style="color:red">Failed to load deployments.</p>';
+        publicGrid.innerHTML = '<p style="color:red">Failed to load online projects.</p>';
+    }
 }
 
 async function deleteProject(roomId, isPrivate, skipConfirm = false, confirmationName) {
@@ -2716,20 +2925,7 @@ function proceedWithOptimisticDelete(room, cardEl, confirmationName) {
                 }
                 var replacementRoom = rooms[index];
                 if (replacementRoom) {
-                    var newCard = document.createElement('div');
-                    newCard.className = 'project-card';
-                    newCard.dataset.roomId = replacementRoom.id;
-                    var lock = (replacementRoom.is_public === false) ? '<i class="fa-solid fa-lock" title="Private"></i> ' : '';
-                    newCard.innerHTML = '<h4>' + lock + replacementRoom.id + '</h4><p>' + (replacementRoom.description || 'No description') + '</p>';
-
-                    try {
-                        var deleteBtn = document.createElement('button');
-                        deleteBtn.className = 'delete-btn';
-                        deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
-                        deleteBtn.title = 'Delete project — type project name to confirm (undo available for 5s)';
-                        deleteBtn.onclick = function (e) { e.stopPropagation(); handleDeleteClick(replacementRoom, newCard); };
-                        newCard.appendChild(deleteBtn);
-                    } catch (e) { }
+                    var newCard = createOwnedProjectCard(replacementRoom);
                     parent.replaceChild(newCard, placeholder);
                 } else {
                     if (parent && placeholder) parent.removeChild(placeholder);
@@ -4356,6 +4552,7 @@ window.togglePasswordVisibility = togglePasswordVisibility;
 window.endDemo = endDemo;
 window.returnToDashboard = returnToDashboard;
 window.loadProjects = loadProjects;
+window.loadDeployDashboard = loadDeployDashboard;
 window.createRoom = createRoom;
 window.joinRoomViaId = joinRoomViaId;
 window.enterRoom = enterRoom;
@@ -6106,6 +6303,9 @@ function setupSidebarNavigation() {
 
     var projectsNavItem = document.querySelector('.nav-item[data-tab="projects"]');
     if (projectsNavItem) projectsNavItem.addEventListener('click', function () { switchDashboardTab('projects'); });
+
+    var deployNavItem = document.querySelector('.nav-item[data-tab="deploy"]');
+    if (deployNavItem) deployNavItem.addEventListener('click', function () { switchDashboardTab('deploy'); });
 
     var settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]');
     if (settingsNavItem) settingsNavItem.addEventListener('click', function () { switchDashboardTab('settings'); });

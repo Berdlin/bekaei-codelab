@@ -1365,6 +1365,109 @@ app.get('/api/my-rooms', async (req, res) => {
     }
 });
 
+function buildPreviewHtmlFromFiles(files) {
+    const list = Array.isArray(files) ? files : [];
+    const byName = {};
+    list.forEach((f) => {
+        if (f && f.name) byName[String(f.name).toLowerCase()] = String(f.content || '');
+    });
+    let html = byName['index.html'] || '';
+    const css = byName['style.css'] || '';
+    const js = byName['script.js'] || '';
+
+    if (!html) {
+        return '<!doctype html><html><head><meta charset="utf-8"><title>Preview</title></head><body><h2>No index.html found</h2></body></html>';
+    }
+    if (css) {
+        html = html.replace(/<link[^>]*href=["']style\.css["'][^>]*>/i, `<style>\n${css}\n</style>`);
+    }
+    if (js) {
+        html = html.replace(/<script[^>]*src=["']script\.js["'][^>]*><\/script>/i, `<script>\n${js}\n<\/script>`);
+    }
+    return html;
+}
+
+app.post('/api/deploy-project', async (req, res) => {
+    const { roomId, userId } = req.body || {};
+    if (!roomId || !userId) return res.status(400).json({ error: 'roomId and userId are required' });
+
+    try {
+        const { data: room, error: roomError } = await supabase
+            .from('rooms')
+            .select('id, owner_id, description')
+            .eq('id', roomId)
+            .single();
+        if (roomError || !room) return res.status(404).json({ error: 'Project not found' });
+        if (String(room.owner_id) !== String(userId)) return res.status(403).json({ error: 'Only owner can deploy this project' });
+
+        const { data: files, error: filesError } = await supabase
+            .from('files')
+            .select('name, content, lang')
+            .eq('room_id', roomId);
+        if (filesError) return res.status(500).json({ error: filesError.message });
+
+        const previewHtml = buildPreviewHtmlFromFiles(files || []);
+        const deploymentId = String(roomId);
+        const now = new Date().toISOString();
+        const payload = {
+            id: deploymentId,
+            room_id: roomId,
+            owner_id: userId,
+            project_name: roomId,
+            description: room.description || '',
+            preview_html: previewHtml,
+            updated_at: now,
+            created_at: now
+        };
+
+        const { data: deployed, error: deployError } = await supabase
+            .from('deployed_projects')
+            .upsert([payload], { onConflict: 'id' })
+            .select('*')
+            .single();
+
+        if (deployError) {
+            return res.status(500).json({
+                error: deployError.message,
+                hint: 'Create table deployed_projects(id text primary key, room_id text, owner_id uuid, project_name text, description text, preview_html text, created_at timestamptz, updated_at timestamptz)'
+            });
+        }
+        res.json({ success: true, deployment: deployed });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/deployed-projects', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('deployed_projects')
+            .select('id, room_id, owner_id, project_name, description, updated_at, created_at')
+            .order('updated_at', { ascending: false });
+        if (error) return res.status(500).json({ error: error.message });
+        res.json(data || []);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/deployed-project/:id/preview', async (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).send('Missing deployment id');
+    try {
+        const { data, error } = await supabase
+            .from('deployed_projects')
+            .select('preview_html')
+            .eq('id', id)
+            .single();
+        if (error || !data) return res.status(404).send('Deployment not found');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(String(data.preview_html || '<!doctype html><html><body><h2>No preview available</h2></body></html>'));
+    } catch (e) {
+        res.status(500).send('Preview failed: ' + e.message);
+    }
+});
+
 app.post('/api/check-room', async (req, res) => {
     const { roomId, userId, password, ownerEmail } = req.body;
 

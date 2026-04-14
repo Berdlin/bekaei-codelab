@@ -274,6 +274,10 @@
                             <i class="fa-solid fa-diagram-project"></i>
                             <span>Project Management</span>
                         </div>
+                        <div class="nav-item" data-tab="deploy" title="Deploy">
+                            <i class="fa-solid fa-rocket"></i>
+                            <span>Deploy</span>
+                        </div>
                         <div class="nav-item" data-tab="friends" title="Friends">
                             <i class="fa-solid fa-user-group"></i>
                             <span>Friends</span>
@@ -334,6 +338,28 @@
                     </div>
                 </div>
                 <div id="projects-grid" class="projects-grid"></div>
+            </div>
+
+            <div class="dashboard-tab" id="deploy-tab">
+                <div class="dash-header">
+                    <div>
+                        <h2>Deploy</h2>
+                        <p style="color:#64748b;margin-top:5px;">Manage deployments, versions, visibility, and analytics</p>
+                    </div>
+                    <div class="dash-actions" style="display:flex;gap:12px;flex-wrap:wrap;">
+                        <button class="action-btn secondary" onclick="loadDeployDashboard()">
+                            <i class="fa-solid fa-rotate"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+                <div style="margin-bottom:20px;">
+                    <h3 style="margin-bottom:10px;">My Deployments</h3>
+                    <div id="my-deployments-grid" class="projects-grid"></div>
+                </div>
+                <div>
+                    <h3 style="margin-bottom:10px;">Online Projects</h3>
+                    <div id="public-deployments-grid" class="projects-grid"></div>
+                </div>
             </div>
 
             <div class="dashboard-tab" id="friends-tab">

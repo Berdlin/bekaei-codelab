@@ -1795,6 +1795,39 @@ body {
     z-index: 10;
 }
 
+.project-card .deploy-btn {
+    position: absolute;
+    top: 8px;
+    right: 88px;
+    background: #0ea5e9;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.28);
+    z-index: 10;
+}
+
+.project-card:hover .deploy-btn {
+    opacity: 1;
+}
+
+.project-card .deploy-btn:hover {
+    background: #0284c7;
+    transform: scale(1.05);
+}
+
+.online-project-card .deploy-btn {
+    right: 8px;
+}
+
 .project-card:hover .delete-btn {
     opacity: 1;
     transform: translateX(0);
