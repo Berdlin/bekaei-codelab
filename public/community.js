@@ -165,6 +165,33 @@
         try {
             console.log('[Community] Creating post with user_id:', communityState.currentUser?.id);
             
+            // Ensure user profile exists before creating post
+            const { data: existingProfile } = await window.supabaseClient
+                .from('profiles')
+                .select('id')
+                .eq('id', communityState.currentUser.id)
+                .maybeSingle();
+            
+            if (!existingProfile) {
+                console.log('[Community] Profile not found, creating profile...');
+                const { error: profileError } = await window.supabaseClient
+                    .from('profiles')
+                    .upsert({
+                        id: communityState.currentUser.id,
+                        email: communityState.currentUser.email || '',
+                        username: communityState.currentUser.user_metadata?.username || communityState.currentUser.email?.split('@')[0] || 'User',
+                        avatar_url: communityState.currentUser.user_metadata?.avatar_url || null,
+                        bio: communityState.currentUser.user_metadata?.bio || null,
+                        created_at: new Date().toISOString()
+                    }, { onConflict: 'id' });
+                
+                if (profileError) {
+                    console.error('[Community] Failed to create profile:', profileError);
+                    showCommunityError('Failed to create profile. Please try again.');
+                    return;
+                }
+            }
+            
             let attachmentData = null;
             
             // Upload file if present
@@ -644,8 +671,8 @@
                 </div>
                 <div class="comment-content">${formatContent(comment.__cleanContent || comment.content)}</div>
                 <div style="display:flex;gap:8px;margin-top:6px;">
-                    <button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.setReplyTarget(event, ${postId}, '${comment.id}')">Reply</button>
-                    ${(communityState.currentUser && String(communityState.currentUser.id) === String(comment.user_id)) ? `<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.deleteComment(${postId}, '${comment.id}')">Delete</button>` : ''}
+                    <button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();window.community.setReplyTarget(event, ${postId}, '${comment.id}')">Reply</button>
+                    ${(communityState.currentUser && String(communityState.currentUser.id) === String(comment.user_id)) ? `<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();window.community.deleteComment(${postId}, '${comment.id}')">Delete</button>` : ''}
                 </div>
                 ${(grouped[String(comment.id)] || []).length ? `
                     <details style="margin-top:6px;">
@@ -658,8 +685,8 @@
                                 </div>
                                 <div class="comment-content">${formatContent(reply.__cleanContent || reply.content)}</div>
                                 <div style="display:flex;gap:8px;margin-top:6px;">
-                                    <button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.setReplyTarget(event, ${postId}, '${reply.id}')">Reply</button>
-                                    ${(communityState.currentUser && String(communityState.currentUser.id) === String(reply.user_id)) ? `<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.deleteComment(${postId}, '${reply.id}')">Delete</button>` : ''}
+                                    <button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();window.community.setReplyTarget(event, ${postId}, '${reply.id}')">Reply</button>
+                                    ${(communityState.currentUser && String(communityState.currentUser.id) === String(reply.user_id)) ? `<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();window.community.deleteComment(${postId}, '${reply.id}')">Delete</button>` : ''}
                                 </div>
                             </div>
                         `).join('')}
@@ -926,22 +953,83 @@
      */
     async function viewUserProfile(userId) {
         if (!userId) return;
-        if (communityState.currentUser?.id === userId) {
-            document.querySelector('[data-tab="profile"]')?.click();
-            return;
-        }
         try {
-            const { data: profile, error } = await window.supabaseClient
+            let profile = null;
+            
+            // Try to get profile from profiles table
+            const { data: profileData, error: profileError } = await window.supabaseClient
                 .from('profiles')
-                .select('id, username, avatar_url, created_at')
+                .select('id, username, email, avatar_url, bio, created_at')
                 .eq('id', userId)
-                .single();
-            if (error) throw error;
-            if (!profile) {
-                showCommunityError('User profile not found');
-                return;
+                .maybeSingle();
+            
+            if (profileError) {
+                console.error('[Community] Profile query error:', profileError);
             }
-            showUserProfileModal(profile);
+            
+            if (profileData) {
+                profile = profileData;
+            } else {
+                // Profile doesn't exist, try to create it from current user metadata
+                console.log('[Community] Profile not found, attempting to create...');
+                if (communityState.currentUser && communityState.currentUser.id === userId) {
+                    // Create profile from current user's metadata
+                    const { data: newProfile, error: insertError } = await window.supabaseClient
+                        .from('profiles')
+                        .upsert({
+                            id: userId,
+                            email: communityState.currentUser.email || '',
+                            username: communityState.currentUser.user_metadata?.username || communityState.currentUser.email?.split('@')[0] || 'User',
+                            avatar_url: communityState.currentUser.user_metadata?.avatar_url || null,
+                            bio: communityState.currentUser.user_metadata?.bio || null,
+                            created_at: new Date().toISOString()
+                        }, { onConflict: 'id' })
+                        .select('id, username, email, avatar_url, bio, created_at')
+                        .single();
+                    
+                    if (insertError) {
+                        console.error('[Community] Failed to create profile:', insertError);
+                        showCommunityError('Failed to view profile: Profile not found');
+                        return;
+                    }
+                    profile = newProfile;
+                } else {
+                    // For other users, show a minimal profile with what we can infer
+                    profile = {
+                        id: userId,
+                        username: 'User',
+                        email: '',
+                        avatar_url: null,
+                        bio: null,
+                        created_at: new Date().toISOString()
+                    };
+                }
+            }
+            
+            // Get follower counts
+            const { count: followersCount } = await window.supabaseClient
+                .from('followers')
+                .select('*', { count: 'exact', head: true })
+                .eq('following_id', userId);
+            
+            const { count: followingCount } = await window.supabaseClient
+                .from('followers')
+                .select('*', { count: 'exact', head: true })
+                .eq('follower_id', userId);
+            
+            // Check if current user is following this user
+            let isFollowing = false;
+            if (communityState.currentUser && communityState.currentUser.id !== userId) {
+                const { data: followCheck } = await window.supabaseClient
+                    .from('followers')
+                    .select('*')
+                    .eq('follower_id', communityState.currentUser.id)
+                    .eq('following_id', userId)
+                    .single();
+                isFollowing = !!followCheck;
+            }
+            
+            showUserProfileModal(profile, followersCount || 0, followingCount || 0, isFollowing);
         } catch (err) {
             console.error('[Community] Error viewing profile:', err);
             showCommunityError('Failed to view profile');
@@ -951,7 +1039,7 @@
     /**
      * Show user profile modal
      */
-    function showUserProfileModal(profile) {
+    function showUserProfileModal(profile, followersCount = 0, followingCount = 0, isFollowing = false) {
         const modalId = 'user-profile-modal';
         let modal = document.getElementById(modalId);
         if (!modal) {
@@ -963,15 +1051,143 @@
         const avatarHtml = profile.avatar_url
             ? `<img src="${escapeHtml(profile.avatar_url)}" alt="${escapeHtml(profile.username)}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;">`
             : `<div style="width:80px;height:80px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:white;font-size:32px;font-weight:600;">${escapeHtml(profile.username?.charAt(0).toUpperCase() || '?')}</div>`;
+        
+        const bioHtml = profile.bio 
+            ? `<p style="color:var(--text-muted);font-size:14px;margin-bottom:16px;line-height:1.5;">${escapeHtml(profile.bio)}</p>`
+            : `<p style="color:var(--text-muted);font-size:14px;margin-bottom:16px;font-style:italic;">No bio yet</p>`;
+        
+        const isOwnProfile = communityState.currentUser && communityState.currentUser.id === profile.id;
+        
+        const followBtnHtml = !isOwnProfile
+            ? `<button class="action-btn ${isFollowing ? 'secondary' : ''}" id="profile-follow-btn" onclick="window.community.toggleFollow('${profile.id}')" style="margin-right:8px;">
+                <i class="fa-solid ${isFollowing ? 'fa-user-minus' : 'fa-user-plus'}"></i> ${isFollowing ? 'Unfollow' : 'Follow'}
+               </button>`
+            : '';
+        
+        const friendRequestBtnHtml = !isOwnProfile
+            ? `<button class="action-btn secondary" onclick="window.community.sendFriendRequest('${profile.id}')">
+                <i class="fa-solid fa-user-group"></i> Friend Request
+               </button>`
+            : '';
+        
         modal.innerHTML = `
-            <div class="modal-box" style="max-width:400px;text-align:center;">
-                <div style="margin-bottom:20px;">${avatarHtml}</div>
-                <h3 style="margin-bottom:8px;">${escapeHtml(profile.username || 'Anonymous')}</h3>
-                <p style="color:var(--text-muted);font-size:12px;margin-bottom:20px;">Member since ${new Date(profile.created_at).toLocaleDateString()}</p>
-                <button class="action-btn" onclick="document.getElementById('${modalId}').classList.add('hidden')">Close</button>
+            <div class="modal-box" style="max-width:450px;text-align:center;">
+                <div style="margin-bottom:16px;">${avatarHtml}</div>
+                <h3 style="margin-bottom:4px;">${escapeHtml(profile.username || 'Anonymous')}</h3>
+                <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px;">${escapeHtml(profile.email || '')}</p>
+                ${bioHtml}
+                <div style="display:flex;gap:20px;justify-content:center;margin-bottom:16px;">
+                    <div>
+                        <div style="font-size:18px;font-weight:600;">${followingCount}</div>
+                        <div style="color:var(--text-muted);font-size:12px;">Following</div>
+                    </div>
+                    <div>
+                        <div style="font-size:18px;font-weight:600;">${followersCount}</div>
+                        <div style="color:var(--text-muted);font-size:12px;">Followers</div>
+                    </div>
+                </div>
+                ${!isOwnProfile ? `<div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px;">
+                    ${followBtnHtml}
+                    ${friendRequestBtnHtml}
+                </div>` : ''}
+                <button class="action-btn secondary" onclick="document.getElementById('${modalId}').classList.add('hidden')">Close</button>
             </div>
         `;
         modal.classList.remove('hidden');
+    }
+
+    /**
+     * Toggle follow status for a user
+     */
+    async function toggleFollow(userId) {
+        if (!communityState.currentUser) {
+            showCommunityError('Please sign in to follow users');
+            return;
+        }
+        
+        try {
+            // Check if already following
+            const { data: existingFollow } = await window.supabaseClient
+                .from('followers')
+                .select('*')
+                .eq('follower_id', communityState.currentUser.id)
+                .eq('following_id', userId)
+                .single();
+            
+            if (existingFollow) {
+                // Unfollow
+                const { error } = await window.supabaseClient
+                    .from('followers')
+                    .delete()
+                    .eq('follower_id', communityState.currentUser.id)
+                    .eq('following_id', userId);
+                if (error) throw error;
+                showCommunitySuccess('Unfollowed successfully');
+            } else {
+                // Follow
+                const { error } = await window.supabaseClient
+                    .from('followers')
+                    .insert({
+                        follower_id: communityState.currentUser.id,
+                        following_id: userId
+                    });
+                if (error) throw error;
+                showCommunitySuccess('Followed successfully');
+            }
+            
+            // Refresh the modal
+            viewUserProfile(userId);
+        } catch (err) {
+            console.error('[Community] Error toggling follow:', err);
+            showCommunityError('Failed to update follow status');
+        }
+    }
+
+    /**
+     * Send friend request to a user
+     */
+    async function sendFriendRequest(userId) {
+        if (!communityState.currentUser) {
+            showCommunityError('Please sign in to send friend requests');
+            return;
+        }
+        
+        try {
+            // Get the target user's email from profiles
+            const { data: profile } = await window.supabaseClient
+                .from('profiles')
+                .select('email')
+                .eq('id', userId)
+                .maybeSingle();
+            
+            if (!profile || !profile.email) {
+                showCommunityError('User email not found');
+                return;
+            }
+            
+            // Send friend request using the friends API
+            const response = await fetch('/api/friends/request', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    fromUserId: communityState.currentUser.id,
+                    toEmail: profile.email
+                })
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('[Community] Friend request error response:', errorText);
+                throw new Error('Failed to send friend request');
+            }
+            
+            showCommunitySuccess('Friend request sent!');
+        } catch (err) {
+            console.error('[Community] Error sending friend request:', err);
+            showCommunityError(err.message || 'Failed to send friend request');
+        }
     }
 
     /**
@@ -1011,7 +1227,9 @@
         cleanup,
         loadPosts,
         loadPostsMore: () => loadPosts(false),
-        viewUserProfile
+        viewUserProfile,
+        toggleFollow,
+        sendFriendRequest
     };
 
     // Auto-initialize when DOM is ready

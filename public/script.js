@@ -1272,11 +1272,13 @@ function setProfileEditMode(enabled) {
     profileEditMode = !!enabled;
 
     var usernameInput = document.getElementById('profile-username-input');
+    var bioInput = document.getElementById('profile-bio-input');
     var saveBtn = document.getElementById('save-profile-btn');
     var uploader = document.getElementById('profile-avatar-uploader');
     var avatarChangeBtn = document.getElementById('profile-avatar-change-btn');
 
     if (usernameInput) usernameInput.disabled = !profileEditMode;
+    if (bioInput) bioInput.disabled = !profileEditMode;
 
     if (saveBtn) {
         saveBtn.disabled = !profileEditMode;
@@ -1301,6 +1303,7 @@ async function saveProfileChanges() {
         return showToast('Click Change to edit your profile.', 'info');
     }
     var username = (document.getElementById('profile-username-input') || {}).value || '';
+    var bio = (document.getElementById('profile-bio-input') || {}).value || '';
     var avatarFile = (document.getElementById('profile-avatar-input') || {}).files ? document.getElementById('profile-avatar-input').files[0] : null;
     var updates = { username: username };
 
@@ -1314,6 +1317,21 @@ async function saveProfileChanges() {
             }
             var { data, error } = await window.supabaseClient.auth.updateUser({ data: updates });
             if (error) throw error;
+            
+            // Save bio to profiles table
+            if (bio !== undefined) {
+                const { error: bioError } = await window.supabaseClient
+                    .from('profiles')
+                    .upsert({ 
+                        id: currentUser.id, 
+                        bio: bio,
+                        username: username,
+                        email: currentUser.email,
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'id' });
+                if (bioError) console.error('Error saving bio:', bioError);
+            }
+            
             showToast('Profile updated', 'success');
             setProfileEditMode(false);
             try {
@@ -1580,6 +1598,40 @@ function handleUserLogin(user) {
 
     var profileEmailDisplay = document.getElementById("profile-email-display");
     if (profileEmailDisplay) profileEmailDisplay.value = user.email;
+
+    // Load bio and follower counts from profiles table
+    if (window.supabaseClient && currentUser) {
+        window.supabaseClient
+            .from('profiles')
+            .select('bio')
+            .eq('id', currentUser.id)
+            .single()
+            .then(({ data, error }) => {
+                if (!error && data) {
+                    var bioInput = document.getElementById('profile-bio-input');
+                    if (bioInput) bioInput.value = data.bio || '';
+                }
+            });
+
+        // Load follower counts
+        window.supabaseClient
+            .from('followers')
+            .select('*', { count: 'exact', head: true })
+            .eq('following_id', currentUser.id)
+            .then(({ count }) => {
+                var followersCountEl = document.getElementById('profile-followers-count');
+                if (followersCountEl) followersCountEl.textContent = count || 0;
+            });
+
+        window.supabaseClient
+            .from('followers')
+            .select('*', { count: 'exact', head: true })
+            .eq('follower_id', currentUser.id)
+            .then(({ count }) => {
+                var followingCountEl = document.getElementById('profile-following-count');
+                if (followingCountEl) followingCountEl.textContent = count || 0;
+            });
+    }
 
     // Update profile avatar (image or fallback initial letter).
     var avatarUrl = user.user_metadata && user.user_metadata.avatar_url ? user.user_metadata.avatar_url : null;
@@ -3190,7 +3242,13 @@ async function loadDeployDashboard() {
                 "<p style='margin-top:8px;font-size:12px;color:#64748b;'>/" + "p/" + escapeHtml(project.slug || '') + "</p>" +
                 "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Version: " + escapeHtml(project.current_version || 1) + " | Last deployed: " + escapeHtml(formatDeployDate(project.last_deployed_at)) + "</p>" +
                 "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>" +
-                "<div class='deployment-engagement' id='deployment-engagement-" + escapeHtml(project.id) + "' style='margin-top:10px;font-size:12px;color:#64748b;'>Loading likes/comments...</div>";
+                "<div class='deployment-engagement' id='deployment-engagement-" + escapeHtml(project.id) + "' style='margin-top:10px;font-size:12px;color:#64748b;'>Loading likes/comments...</div>" +
+                "<div class='deployment-comments-dropdown' id='deployment-comments-dropdown-" + escapeHtml(project.id) + "' style='display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-color);'>" +
+                "<div id='deployment-comments-list-" + escapeHtml(project.id) + "' style='max-height:300px;overflow-y:auto;padding:8px 0;'><div style='color:var(--text-muted);text-align:center;'>Loading comments...</div></div>" +
+                "<div style='display:flex;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color);'>" +
+                "<input type='text' id='deployment-comment-input-" + escapeHtml(project.id) + "' class='dark-input' placeholder='Add a comment...' style='flex:1;padding:8px;font-size:13px;' onkeypress='if(event.key===\"Enter\")sendDeploymentComment(event,\"" + escapeHtml(project.id) + "\")' />" +
+                "<button class='action-btn secondary' style='padding:8px 12px;font-size:12px;' onclick='sendDeploymentComment(event,\"" + escapeHtml(project.id) + "\")'><i class='fa-solid fa-paper-plane'></i></button>" +
+                "</div></div>";
             var openBtn = document.createElement("button");
             openBtn.className = "action-btn secondary deployment-action-btn";
             openBtn.innerHTML = '<i class="fa-solid fa-up-right-from-square"></i> Open Browser';
@@ -3204,10 +3262,12 @@ async function loadDeployDashboard() {
             actions.appendChild(openBtn);
             var openCommentsBtn = document.createElement("button");
             openCommentsBtn.className = "action-btn secondary deployment-action-btn";
-            openCommentsBtn.innerHTML = '<i class="fa-regular fa-comment-dots"></i> Comments';
-            openCommentsBtn.onclick = function (e) { openDeploymentComments(e, project.id); };
+            openCommentsBtn.innerHTML = '<i class="fa-solid fa-chevron-down" id="deployment-comments-arrow-' + escapeHtml(project.id) + '" style="transition:transform 0.3s;"></i> Comments';
+            openCommentsBtn.onclick = function (e) { toggleDeploymentCommentsDropdown(e, project.id); };
             actions.appendChild(openCommentsBtn);
+
             div.appendChild(actions);
+
             div.onclick = function () {
                 openDeploymentSlug(project.slug);
             };
@@ -3241,9 +3301,6 @@ async function loadDeploymentEngagement(deploymentId, targetElementId, mode) {
             '<button class="action-btn secondary" style="padding:6px 10px;font-size:12px;" onclick="toggleDeploymentLike(event,\'' + escapeHtml(deploymentId) + '\')">' +
             (liked ? '<i class="fa-solid fa-heart"></i> Liked' : '<i class="fa-regular fa-heart"></i> Like') +
             '</button> ' +
-            '<button class="action-btn secondary" style="padding:6px 10px;font-size:12px;" onclick="openDeploymentComments(event,\'' + escapeHtml(deploymentId) + '\')">' +
-            '<i class="fa-regular fa-comment"></i> Comment' +
-            '</button>' +
             '<span style="margin-left:8px;">Likes: ' + escapeHtml(data.likes || 0) + ' | Comments: ' + escapeHtml(data.comments || 0) + '</span>';
     } catch (e) {
         el.innerHTML = 'Likes/comments unavailable';
@@ -3412,9 +3469,109 @@ async function submitDeploymentComment() {
     }
 }
 
+function toggleDeploymentCommentsDropdown(event, deploymentId) {
+    if (event) event.stopPropagation();
+    var dropdown = document.getElementById('deployment-comments-dropdown-' + deploymentId);
+    var arrow = document.getElementById('deployment-comments-arrow-' + deploymentId);
+    if (!dropdown || !arrow) return;
+    
+    var isVisible = dropdown.style.display !== 'none';
+    dropdown.style.display = isVisible ? 'none' : 'block';
+    arrow.style.transform = isVisible ? 'rotate(0deg)' : 'rotate(180deg)';
+    
+    if (!isVisible) {
+        loadDeploymentCommentsInline(deploymentId);
+    }
+}
+
+async function loadDeploymentCommentsInline(deploymentId) {
+    var commentsList = document.getElementById('deployment-comments-list-' + deploymentId);
+    if (!commentsList) return;
+    
+    try {
+        var data = await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/comments?limit=10&offset=0');
+        var comments = data && data.comments ? data.comments : [];
+        renderDeploymentCommentsInline(comments, deploymentId);
+    } catch (e) {
+        if (commentsList) commentsList.innerHTML = '<div style="color:var(--text-muted);text-align:center;">Failed to load comments</div>';
+    }
+}
+
+function renderDeploymentCommentsInline(comments, deploymentId) {
+    var commentsList = document.getElementById('deployment-comments-list-' + deploymentId);
+    if (!commentsList) return;
+    
+    if (!comments || !comments.length) {
+        commentsList.innerHTML = '<div style="color:var(--text-muted);text-align:center;">No comments yet</div>';
+        return;
+    }
+    
+    commentsList.innerHTML = comments.map(function(comment) {
+        var timeAgo = formatDeployDate(comment.created_at);
+        return '<div style="padding:8px;border-bottom:1px solid var(--border-color);" id="deployment-comment-' + escapeHtml(comment.id) + '">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<strong style="font-size:13px;">' + escapeHtml(comment.username || 'Anonymous') + '</strong>' +
+            '<span style="font-size:11px;color:#64748b;">' + escapeHtml(timeAgo) + '</span>' +
+            '</div>' +
+            '<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="event.stopPropagation();setInlineDeploymentReply(\'' + escapeHtml(deploymentId) + '\',\'' + escapeHtml(comment.id) + '\',\'' + escapeHtml(comment.username || 'Anonymous') + '\')">Reply</button>' +
+            '</div>' +
+            '<div style="font-size:13px;">' + escapeHtml(comment.comment || '') + '</div>' +
+            '</div>';
+    }).join('');
+}
+
+function setInlineDeploymentReply(deploymentId, commentId, username) {
+    var input = document.getElementById('deployment-comment-input-' + deploymentId);
+    if (!input) return;
+    input.dataset.replyToCommentId = commentId;
+    input.placeholder = 'Replying to ' + escapeHtml(username) + '...';
+    input.focus();
+}
+
+async function sendDeploymentComment(event, deploymentId) {
+    if (event) event.stopPropagation();
+    if (!currentUser) return showToast('Please login first', 'error');
+    
+    var input = document.getElementById('deployment-comment-input-' + deploymentId);
+    var text = input ? String(input.value || '').trim() : '';
+    if (!text) return showToast('Write a comment first', 'warning');
+    
+    var replyToCommentId = input ? (input.dataset.replyToCommentId || null) : null;
+    
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/comments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: currentUser.id,
+                username: currentUser.username || currentUser.email || 'User',
+                comment: text,
+                replyToCommentId: replyToCommentId
+            })
+        });
+        if (input) {
+            input.value = '';
+            input.placeholder = 'Add a comment...';
+            delete input.dataset.replyToCommentId;
+        }
+        loadDeploymentCommentsInline(deploymentId);
+        loadDeploymentEngagement(deploymentId);
+        showToast('Comment added', 'success');
+    } catch (e) {
+        showToast('Failed to add comment', 'error');
+    }
+}
+
 async function openUserProfileCard(event, userId) {
     if (event) event.stopPropagation();
     if (!userId) return;
+    // Use the enhanced community profile modal if available
+    if (window.community && window.community.viewUserProfile) {
+        window.community.viewUserProfile(userId);
+        return;
+    }
+    // Fallback to simple profile view
     try {
         var data = await safeFetch('/api/user/profile?userId=' + encodeURIComponent(userId));
         var content = document.getElementById('thread-view-content');
@@ -5602,8 +5759,11 @@ function formatMarkdown(text) {
     safe = safe.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     // Convert markdown italic
     safe = safe.replace(/\*(.*?)\*/g, '<em>$1</em>');
-    // Convert code blocks
-    safe = safe.replace(/```([\w]*)\n?([\s\S]*?)```/g, '<pre style="background:#1e293b;padding:8px;border-radius:4px;overflow-x:auto;margin:8px 0;"><code>$2</code></pre>');
+    // Convert code blocks with copy button
+    safe = safe.replace(/```([\w]*)\n?([\s\S]*?)```/g, function(match, lang, code) {
+        var codeId = 'code-' + Math.random().toString(36).substr(2, 9);
+        return '<div style="position:relative;margin:8px 0;"><button onclick="copyCodeBlock(\'' + codeId + '\')" style="position:absolute;top:4px;right:4px;padding:4px 8px;font-size:11px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#fff;cursor:pointer;z-index:1;"><i class="fa-solid fa-copy"></i> Copy</button><pre id="' + codeId + '" style="background:#1e293b;padding:8px;border-radius:4px;overflow-x:auto;margin:0;"><code>' + code + '</code></pre></div>';
+    });
     // Convert inline code
     safe = safe.replace(/`([^`]+)`/g, '<code style="background:#1e293b;padding:2px 4px;border-radius:3px;font-family:monospace;">$1</code>');
     // Convert bullet points
@@ -5613,6 +5773,17 @@ function formatMarkdown(text) {
     // Convert newlines to breaks (only outside of pre tags)
     safe = safe.replace(/\n/g, '<br>');
     return safe;
+}
+
+function copyCodeBlock(codeId) {
+    var preElement = document.getElementById(codeId);
+    if (!preElement) return;
+    var code = preElement.textContent || preElement.innerText;
+    navigator.clipboard.writeText(code).then(function() {
+        showToast('Code copied to clipboard', 'success');
+    }).catch(function(err) {
+        showToast('Failed to copy code', 'error');
+    });
 }
 
 var AIAssistant = {
@@ -5850,7 +6021,7 @@ async function continueThinkingImplementation() {
     var loading = document.getElementById("ai-loading");
     if (loading) loading.remove();
 
-    var codeBlocks = response.match(/```[\w]*\n[\s\S]*?```/g) || [];
+    var codeBlocks = response.match(/(?:^|\n)```[^\n]*\n([\s\S]*?)\n```/g) || [];
 
     if (codeBlocks.length === 0) {
         AIAssistant.addMessage("assistant", response);
@@ -6816,7 +6987,7 @@ async function continueAutoActImplementation() {
     var loading = document.getElementById("ai-loading");
     if (loading) loading.remove();
 
-    var codeBlocks = response.match(/```[\w]*\n[\s\S]*?```/g) || [];
+    var codeBlocks = response.match(/```[^\n]*\n[\s\S]*?```/g) || [];
 
     if (codeBlocks.length === 0) {
         AIAssistant.addMessage("assistant", response);

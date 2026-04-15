@@ -69,7 +69,7 @@ const supabaseAdmin = SUPABASE_SERVICE_ROLE_KEY ? createClient(SUPABASE_URL, SUP
 }) : null;
 
 app.use(cors({
-    origin: '*',
+    origin: ['https://bekaei-codelab-production.up.railway.app', 'http://localhost:3000', 'http://localhost:3001'],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));
@@ -2009,7 +2009,14 @@ app.get('/api/deployments/:id/comments', async (req, res) => {
         const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
         const { data, error } = await db
             .from('deployment_comments')
-            .select('id, user_id, username, comment, created_at')
+            .select(`
+                id,
+                user_id,
+                username,
+                comment,
+                created_at,
+                profiles:user_id (username, avatar_url, email)
+            `)
             .eq('deployment_id', deploymentId)
             .order('created_at', { ascending: false })
             .range(offset, offset + limit - 1);
@@ -2019,7 +2026,10 @@ app.get('/api/deployments/:id/comments', async (req, res) => {
             return {
                 ...row,
                 comment: parsed.cleanComment,
-                reply_to_comment_id: parsed.replyToCommentId
+                reply_to_comment_id: parsed.replyToCommentId,
+                avatar_url: row.profiles?.avatar_url || null,
+                email: row.profiles?.email || null,
+                display_username: row.profiles?.username || row.username || 'Anonymous'
             };
         });
         res.json({ comments: rows, pagination: { limit, offset, hasMore: rows.length >= limit } });
@@ -2216,7 +2226,7 @@ app.post('/api/create-room', async (req, res) => {
     </div>
 </body>
 </html>`;
-            await supabase.from('files').insert([{
+            await db.from('files').insert([{
                 room_id: roomId.trim(),
                 name: 'index.html',
                 content: content,
@@ -2949,7 +2959,8 @@ io.on('connection', (socket) => {
     socket.on('file-created', async ({ roomId, file }) => {
         if (!roomId || !file) return;
         try {
-            const { data } = await supabase.from('files').insert([{
+            const db = supabaseAdmin || supabase;
+            const { data } = await db.from('files').insert([{
                 room_id: roomId,
                 name: file.name,
                 content: file.content || '',
@@ -2967,7 +2978,8 @@ io.on('connection', (socket) => {
     socket.on('file-deleted', async ({ roomId, fileId }) => {
         if (!roomId || !fileId) return;
         try {
-            await supabase.from('files').delete().eq('id', fileId);
+            const db = supabaseAdmin || supabase;
+            await db.from('files').delete().eq('id', fileId);
             io.to(roomId).emit('file-deleted', fileId);
         } catch (e) {
             console.error('Error deleting file:', e);

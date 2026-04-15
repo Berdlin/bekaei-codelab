@@ -365,7 +365,7 @@
                         <h2><i class="fa-solid fa-layer-group"></i> Deployments</h2>
                         <p style="color:#64748b;margin-top:5px;">Deploy community and settings for your published projects</p>
                     </div>
-                    <div class="dash-actions" style="display:flex;gap:12px;flex-wrap:wrap;">
+                    <div class="dash-actions" style="display:flex;gap:12px;flex-wrap:wrap;justify-content: space-between;">
                         <button class="action-btn secondary" onclick="openDeploymentBrowserFromToolbar()">
                             <i class="fa-solid fa-globe"></i> Browser
                         </button>
@@ -385,18 +385,13 @@
                 </div>
 
                 <div id="deploy-online-subtab" class="deploy-subtab-panel active">
-                    <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px;">
-                        <h3 style="margin:0;">Online Deployments Community</h3>
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                            <select id="deploy-sort-select" class="dark-input" onchange="loadDeployDashboard()">
-                                <option value="newest">Sort: Newest</option>
-                                <option value="most-liked">Sort: Most Liked</option>
-                                <option value="most-commented">Sort: Most Commented</option>
-                            </select>
-                            <button class="action-btn secondary" type="button" onclick="openDeploymentThreadView()">
-                                <i class="fa-solid fa-comments"></i> Thread View
-                            </button>
-                        </div>
+                    <h3 style="margin:0;margin-bottom:10px;">Online Deployments Community</h3>
+                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+                        <select id="deploy-sort-select" class="dark-input" onchange="loadDeployDashboard()">
+                            <option value="newest">Sort: Newest</option>
+                            <option value="most-liked">Sort: Most Liked</option>
+                            <option value="most-commented">Sort: Most Commented</option>
+                        </select>
                     </div>
                     <p style="color:#64748b;margin-bottom:14px;">Browse live deployments, like and comment, and open each deployment in browser-only preview.</p>
                     <div id="public-deployments-grid" class="projects-grid"></div>
@@ -495,6 +490,8 @@
                             <input type="text" id="profile-email-display" class="dark-input" disabled>
                             <label style="margin-top:12px;display:block;">Username</label>
                             <input type="text" id="profile-username-input" class="dark-input" placeholder="Username">
+                            <label style="margin-top:12px;display:block;">Bio</label>
+                            <textarea id="profile-bio-input" class="dark-input" placeholder="Tell us about yourself..." rows="3" style="resize:vertical;"></textarea>
                             <div class="profile-actions" style="margin-top:16px;">
                                 <button class="action-btn" id="save-profile-btn"><i class="fa-solid fa-floppy-disk"></i> Save</button>
                                 <button class="action-btn secondary" type="button" id="profile-avatar-change-btn"
@@ -502,6 +499,17 @@
                                     <i class="fa-solid fa-pen"></i> Change
                                 </button>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="profile-stats" style="grid-template-columns: repeat(2, 1fr); margin-top:10px;">
+                        <div class="stat-item">
+                            <span class="stat-label">Following</span>
+                            <div class="stat-value" id="profile-following-count">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Followers</span>
+                            <div class="stat-value" id="profile-followers-count">0</div>
                         </div>
                     </div>
 
@@ -545,25 +553,21 @@
             <div class="dashboard-tab" id="community-tab">
                 <div class="community-container">
                     <div class="community-header">
-                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
                             <h2 style="margin:0;"><i class="fa-solid fa-users"></i> Community</h2>
-                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                                <select id="community-sort-select" class="dark-input"
-                                    onchange="window.community && window.community.setSort ? window.community.setSort(this.value) : void 0">
-                                    <option value="newest">Sort: Newest</option>
-                                    <option value="most-liked">Sort: Most Liked</option>
-                                    <option value="most-commented">Sort: Most Commented</option>
-                                </select>
-                                <button class="action-btn secondary" type="button"
-                                    onclick="window.community && window.community.openThreadView ? window.community.openThreadView() : void 0">
-                                    <i class="fa-solid fa-comments"></i> Thread View
-                                </button>
-                                <button class="action-btn secondary" type="button"
-                                    onclick="window.community && window.community.refresh ? window.community.refresh() : void 0"
-                                    title="Refresh Community">
-                                    <i class="fa-solid fa-rotate"></i> Refresh
-                                </button>
-                            </div>
+                            <button class="action-btn secondary" type="button"
+                                onclick="window.community && window.community.refresh ? window.community.refresh() : void 0"
+                                title="Refresh Community">
+                                <i class="fa-solid fa-rotate"></i> Refresh
+                            </button>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+                            <select id="community-sort-select" class="dark-input"
+                                onchange="window.community && window.community.setSort ? window.community.setSort(this.value) : void 0">
+                                <option value="newest">Sort: Newest</option>
+                                <option value="most-liked">Sort: Most Liked</option>
+                                <option value="most-commented">Sort: Most Commented</option>
+                            </select>
                         </div>
                         <p>Share your thoughts and connect with others</p>
                     </div>

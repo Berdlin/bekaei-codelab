@@ -1105,9 +1105,13 @@ body {
 }
 
 .nav-section-account {
-    margin-top: auto;
+    position: sticky;
+    bottom: 0;
     padding-top: 10px;
+    padding-bottom: 10px;
     border-top: 1px solid var(--border-color);
+    background: var(--bg-panel);
+    z-index: 10;
 }
 
 /* Dashboard Content Styles */
@@ -1122,7 +1126,7 @@ body {
 
 .dashboard-content {
     flex: 1;
-    padding: 30px;
+    padding: 30px 5%;
     overflow-y: auto;
 }
 
@@ -1742,7 +1746,7 @@ body {
 
 .projects-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
     gap: 20px;
 }
 
