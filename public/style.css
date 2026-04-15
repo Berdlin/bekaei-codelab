@@ -1837,6 +1837,47 @@ body {
     margin-right: 0;
 }
 
+.deploy-subtabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.deploy-subtab-btn {
+    border: 1px solid var(--border-color);
+    background: var(--bg-panel);
+    color: var(--text-main);
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+
+.deploy-subtab-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary-hover);
+}
+
+.deploy-subtab-btn.active {
+    background: var(--primary-gradient);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 6px 16px rgba(14, 165, 233, 0.2);
+}
+
+.deploy-subtab-panel {
+    display: none;
+}
+
+.deploy-subtab-panel.active {
+    display: block;
+}
+
 .deployment-actions {
     display: flex;
     flex-wrap: wrap;
@@ -1858,6 +1899,48 @@ body {
 
 .deployment-engagement .action-btn {
     min-height: 30px;
+}
+
+.deployment-owner {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.deploy-owner-avatar {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.online-project-card {
+    min-height: 250px;
+}
+
+.deployment-setting-stats {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.deployment-setting-stat {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-surface);
+    padding: 8px 10px;
+}
+
+.deployment-setting-stat .stat-label {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.deployment-setting-stat .stat-value {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-main);
 }
 
 .project-card:hover .delete-btn {

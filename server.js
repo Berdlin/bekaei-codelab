@@ -185,6 +185,53 @@ function normalizeEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
 
+function parseReplyMeta(commentText) {
+    const raw = String(commentText || '');
+    const match = raw.match(/^\[reply:([a-zA-Z0-9_\-]+)\]\s*/);
+    if (!match) return { replyToCommentId: null, cleanComment: raw };
+    return {
+        replyToCommentId: String(match[1] || ''),
+        cleanComment: raw.replace(/^\[reply:[a-zA-Z0-9_\-]+\]\s*/, '')
+    };
+}
+
+async function fetchUserPublicProfile(userId) {
+    const uid = String(userId || '').trim();
+    if (!uid) return null;
+    const db = supabaseAdmin || supabase;
+    try {
+        const { data: profile } = await db
+            .from('profiles')
+            .select('id, username, email, avatar_url, created_at')
+            .eq('id', uid)
+            .maybeSingle();
+        if (profile) {
+            return {
+                id: profile.id,
+                username: profile.username || '',
+                email: profile.email || '',
+                avatar_url: profile.avatar_url || null,
+                created_at: profile.created_at || null
+            };
+        }
+    } catch (e) { }
+
+    if (!supabaseAdmin) return null;
+    try {
+        const user = await fetchAdminUserById(supabaseAdmin, uid);
+        if (!user) return null;
+        return {
+            id: user.id,
+            username: user.user_metadata && user.user_metadata.username ? String(user.user_metadata.username) : '',
+            email: user.email || '',
+            avatar_url: user.user_metadata && user.user_metadata.avatar_url ? String(user.user_metadata.avatar_url) : null,
+            created_at: null
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
 async function requireAuthenticatedUser(req, res, next) {
     try {
         const authHeader = String(req.headers.authorization || '');
@@ -1682,15 +1729,39 @@ app.get('/api/deployments/mine', async (req, res) => {
 
 app.get('/api/deployments/public', async (req, res) => {
     try {
+        const sort = String(req.query.sort || 'newest').toLowerCase();
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 100));
+        const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
         const db = supabaseAdmin || supabase;
         const { data, error } = await db
             .from('deployed_projects')
             .select('*')
             .eq('is_public', true)
             .eq('status', 'active')
-            .order('updated_at', { ascending: false });
+            .order('updated_at', { ascending: false })
+            .range(offset, offset + limit - 1);
         if (error) return res.status(500).json({ error: error.message });
-        res.json(data || []);
+        const rows = data || [];
+        const withStats = await Promise.all(rows.map(async (d) => {
+            const [likesRes, commentsRes, owner] = await Promise.all([
+                db.from('deployment_likes').select('*', { count: 'exact', head: true }).eq('deployment_id', d.id),
+                db.from('deployment_comments').select('*', { count: 'exact', head: true }).eq('deployment_id', d.id),
+                fetchUserPublicProfile(d.owner_id)
+            ]);
+            return {
+                ...d,
+                likes_count: likesRes && likesRes.count ? likesRes.count : 0,
+                comments_count: commentsRes && commentsRes.count ? commentsRes.count : 0,
+                owner_profile: owner || null,
+                owner_username: owner && owner.username ? owner.username : '',
+                owner_email: owner && owner.email ? owner.email : '',
+                owner_avatar_url: owner && owner.avatar_url ? owner.avatar_url : null
+            };
+        }));
+        if (sort === 'most-liked') withStats.sort((a, b) => Number(b.likes_count || 0) - Number(a.likes_count || 0));
+        else if (sort === 'most-commented') withStats.sort((a, b) => Number(b.comments_count || 0) - Number(a.comments_count || 0));
+        else withStats.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+        res.json(withStats);
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -1934,14 +2005,24 @@ app.get('/api/deployments/:id/comments', async (req, res) => {
     if (!deploymentId) return res.status(400).json({ error: 'id is required' });
     try {
         const db = supabaseAdmin || supabase;
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 100));
+        const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
         const { data, error } = await db
             .from('deployment_comments')
             .select('id, user_id, username, comment, created_at')
             .eq('deployment_id', deploymentId)
             .order('created_at', { ascending: false })
-            .limit(50);
+            .range(offset, offset + limit - 1);
         if (error) return res.status(500).json({ error: error.message });
-        res.json(data || []);
+        const rows = (data || []).map((row) => {
+            const parsed = parseReplyMeta(row.comment);
+            return {
+                ...row,
+                comment: parsed.cleanComment,
+                reply_to_comment_id: parsed.replyToCommentId
+            };
+        });
+        res.json({ comments: rows, pagination: { limit, offset, hasMore: rows.length >= limit } });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -1949,21 +2030,73 @@ app.get('/api/deployments/:id/comments', async (req, res) => {
 
 app.post('/api/deployments/:id/comments', async (req, res) => {
     const deploymentId = String(req.params.id || '').trim();
-    const { userId, username, comment } = req.body || {};
+    const { userId, username, comment, replyToCommentId } = req.body || {};
     if (!deploymentId || !userId || !comment) return res.status(400).json({ error: 'id, userId and comment are required' });
     try {
         const db = supabaseAdmin || supabase;
         const cleanComment = String(comment || '').trim().slice(0, 500);
         if (!cleanComment) return res.status(400).json({ error: 'Comment cannot be empty' });
+        const replyPrefix = replyToCommentId ? `[reply:${String(replyToCommentId).trim()}] ` : '';
         const payload = {
             deployment_id: deploymentId,
             user_id: String(userId),
             username: String(username || 'User').slice(0, 120),
-            comment: cleanComment
+            comment: (replyPrefix + cleanComment).slice(0, 500)
         };
         const { data, error } = await db.from('deployment_comments').insert([payload]).select('*').single();
         if (error) return res.status(500).json({ error: error.message });
-        res.json({ success: true, comment: data });
+        const parsed = parseReplyMeta(data.comment);
+        res.json({
+            success: true,
+            comment: {
+                ...data,
+                comment: parsed.cleanComment,
+                reply_to_comment_id: parsed.replyToCommentId
+            }
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/deployments/:id/comments/:commentId', async (req, res) => {
+    const deploymentId = String(req.params.id || '').trim();
+    const commentId = String(req.params.commentId || '').trim();
+    const userId = String(req.query.userId || '').trim();
+    if (!deploymentId || !commentId || !userId) return res.status(400).json({ error: 'id, commentId and userId are required' });
+    try {
+        const db = supabaseAdmin || supabase;
+        const { data: comment, error: cErr } = await db
+            .from('deployment_comments')
+            .select('id, user_id')
+            .eq('id', commentId)
+            .eq('deployment_id', deploymentId)
+            .maybeSingle();
+        if (cErr) return res.status(500).json({ error: cErr.message });
+        if (!comment) return res.status(404).json({ error: 'Comment not found' });
+        const { data: deployment, error: dErr } = await db
+            .from('deployed_projects')
+            .select('owner_id')
+            .eq('id', deploymentId)
+            .maybeSingle();
+        if (dErr) return res.status(500).json({ error: dErr.message });
+        const canDelete = String(comment.user_id) === userId || (deployment && String(deployment.owner_id) === userId);
+        if (!canDelete) return res.status(403).json({ error: 'Not allowed to delete this comment' });
+        const { error } = await db.from('deployment_comments').delete().eq('id', commentId);
+        if (error) return res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/api/user/profile', async (req, res) => {
+    const uid = String(req.query.userId || '').trim();
+    if (!uid) return res.status(400).json({ error: 'userId is required' });
+    try {
+        const profile = await fetchUserPublicProfile(uid);
+        if (!profile) return res.status(404).json({ error: 'Profile not found' });
+        res.json(profile);
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -2036,7 +2169,8 @@ app.post('/api/create-room', async (req, res) => {
     }
 
     try {
-        const { error: roomError } = await supabase
+        const db = supabaseAdmin || supabase;
+        const { error: roomError } = await db
             .from('rooms')
             .upsert([{
                 id: roomId.trim(),
@@ -2048,7 +2182,7 @@ app.post('/api/create-room', async (req, res) => {
 
         if (roomError) return res.status(500).json({ error: roomError.message });
 
-        const { data: existingFiles } = await supabase.from('files').select('id').eq('room_id', roomId.trim());
+        const { data: existingFiles } = await db.from('files').select('id').eq('room_id', roomId.trim());
         if (!existingFiles || existingFiles.length === 0) {
             const content = `<!DOCTYPE html>
 <html>
@@ -2099,9 +2233,10 @@ app.post('/api/delete-room', async (req, res) => {
     const { roomId, userId } = req.body;
 
     try {
-        const { data: room } = await supabase.from('rooms').select('owner_id,id').eq('id', roomId).single();
+        const db = supabaseAdmin || supabase;
+        const { data: room } = await db.from('rooms').select('owner_id,id').eq('id', roomId).single();
 
-        
+
         const confirmationName = req.body && req.body.confirmationName ? String(req.body.confirmationName).trim().toLowerCase() : null;
         const isOwner = room && String(room.owner_id) === String(userId);
         const nameMatches = room && confirmationName && String(room.id).trim().toLowerCase() === confirmationName;
@@ -2110,8 +2245,8 @@ app.post('/api/delete-room', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        await supabase.from('files').delete().eq('room_id', roomId);
-        await supabase.from('rooms').delete().eq('id', roomId);
+        await db.from('files').delete().eq('room_id', roomId);
+        await db.from('rooms').delete().eq('id', roomId);
 
         res.json({ success: true });
     } catch (e) {
@@ -2215,7 +2350,8 @@ app.post('/api/save-project', async (req, res) => {
     }
 
     try {
-        await supabase.from('files').delete().eq('room_id', roomId);
+        const db = supabaseAdmin || supabase;
+        await db.from('files').delete().eq('room_id', roomId);
 
         const fileData = files.map(file => ({
             room_id: roomId,
@@ -2224,7 +2360,7 @@ app.post('/api/save-project', async (req, res) => {
             lang: file.lang
         }));
 
-        const { error } = await supabase.from('files').insert(fileData);
+        const { error } = await db.from('files').insert(fileData);
 
         if (error) {
             return res.status(500).json({ error: error.message });
@@ -2732,7 +2868,8 @@ io.on('connection', (socket) => {
         }
 
         try {
-            const { data: files } = await supabase.from('files').select('id, name').eq('room_id', roomId).order('created_at');
+            const db = supabaseAdmin || supabase;
+            const { data: files } = await db.from('files').select('id, name').eq('room_id', roomId).order('created_at');
             socket.emit('init-state', { files: files || [] });
         } catch (e) {
             console.error('Error fetching files:', e);
@@ -2746,7 +2883,8 @@ io.on('connection', (socket) => {
     socket.on('request-file-content', async ({ roomId, fileId }) => {
         if (!roomId || !fileId) return;
         try {
-            const { data: file } = await supabase.from('files').select('*').eq('id', fileId).single();
+            const db = supabaseAdmin || supabase;
+            const { data: file } = await db.from('files').select('*').eq('id', fileId).single();
             if (file) {
                 socket.emit('file-content-response', file);
             }
@@ -2797,7 +2935,8 @@ io.on('connection', (socket) => {
             pendingFileSaves.set(key, setTimeout(async () => {
                 pendingFileSaves.delete(key);
                 try {
-                    await supabase.from('files').update({ content }).eq('id', fileId);
+                    const db = supabaseAdmin || supabase;
+                    await db.from('files').update({ content }).eq('id', fileId);
                 } catch (e) {
                     console.error('Error updating file (debounced):', e);
                 }

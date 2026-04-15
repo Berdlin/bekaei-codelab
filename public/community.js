@@ -14,7 +14,10 @@
         loading: false,
         hasMore: true,
         limit: 20,
-        currentAttachment: null  // Store selected file for upload
+        offset: 0,
+        sort: 'newest',
+        currentAttachment: null,  // Store selected file for upload
+        commentsState: {}
     };
 
     /**
@@ -26,7 +29,7 @@
         // Load current user
         loadCurrentUser().then(() => {
             // Load posts
-            loadPosts();
+            loadPosts(true);
             // Setup real-time subscriptions
             setupRealtimeSubscriptions();
         });
@@ -70,9 +73,12 @@
     /**
      * Load posts from Supabase with user profiles
      */
-    async function loadPosts() {
+    async function loadPosts(reset) {
         if (communityState.loading) return;
-        
+        if (reset) {
+            communityState.offset = 0;
+            communityState.hasMore = true;
+        }
         communityState.loading = true;
         updateLoadingState(true);
 
@@ -95,11 +101,31 @@
                     likes:likes(user_id)
                 `)
                 .order('created_at', { ascending: false })
-                .limit(communityState.limit);
+                .range(communityState.offset, communityState.offset + communityState.limit - 1);
 
             if (error) throw error;
 
-            communityState.posts = posts || [];
+            const rows = posts || [];
+            const withCounts = await Promise.all(rows.map(async (post) => {
+                let commentCount = 0;
+                try {
+                    const { count } = await window.supabaseClient
+                        .from('comments')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('post_id', post.id);
+                    commentCount = count || 0;
+                } catch (e) { }
+                return { ...post, __commentCount: commentCount };
+            }));
+            if (communityState.sort === 'most-liked') {
+                withCounts.sort((a, b) => (b.likes || []).length - (a.likes || []).length);
+            } else if (communityState.sort === 'most-commented') {
+                withCounts.sort((a, b) => Number(b.__commentCount || 0) - Number(a.__commentCount || 0));
+            }
+            if (reset) communityState.posts = withCounts;
+            else communityState.posts = communityState.posts.concat(withCounts);
+            communityState.hasMore = rows.length >= communityState.limit;
+            communityState.offset += rows.length;
             renderPosts();
         } catch (err) {
             console.error('[Community] Error loading posts:', err);
@@ -115,7 +141,7 @@
      */
     async function refresh() {
         try {
-            await loadPosts();
+            await loadPosts(true);
         } catch (err) {
             console.error('[Community] Refresh failed:', err);
             showCommunityError('Failed to refresh posts. Please try again.');
@@ -228,8 +254,17 @@
     /**
      * Load comments for a specific post
      */
-    async function loadComments(postId) {
+    async function loadComments(postId, reset) {
         try {
+            if (!communityState.commentsState[postId]) {
+                communityState.commentsState[postId] = { offset: 0, limit: 15, hasMore: true, items: [], replyTo: null };
+            }
+            const state = communityState.commentsState[postId];
+            if (reset) {
+                state.offset = 0;
+                state.hasMore = true;
+                state.items = [];
+            }
             const { data: comments, error } = await window.supabaseClient
                 .from('comments')
                 .select(`
@@ -240,11 +275,15 @@
                     profiles:user_id (username, avatar_url)
                 `)
                 .eq('post_id', postId)
-                .order('created_at', { ascending: true });
+                .order('created_at', { ascending: false })
+                .range(state.offset, state.offset + state.limit - 1);
 
             if (error) throw error;
-
-            renderComments(postId, comments || []);
+            const rows = comments || [];
+            state.items = reset ? rows : state.items.concat(rows);
+            state.hasMore = rows.length >= state.limit;
+            state.offset += rows.length;
+            renderComments(postId, state.items || []);
         } catch (err) {
             console.error('[Community] Error loading comments:', err);
         }
@@ -262,12 +301,16 @@
         }
 
         try {
+            const replyTo = communityState.commentsState[postId] && communityState.commentsState[postId].replyTo
+                ? String(communityState.commentsState[postId].replyTo)
+                : null;
+            const text = replyTo ? (`[reply:${replyTo}] ` + content.trim()) : content.trim();
             const { data: comment, error } = await window.supabaseClient
                 .from('comments')
                 .insert({
                     post_id: postId,
                     user_id: communityState.currentUser.id,
-                    content: content.trim()
+                    content: text
                 })
                 .select(`
                     id,
@@ -283,9 +326,10 @@
             // Clear input
             const input = document.getElementById(`comment-input-${postId}`);
             if (input) input.value = '';
+            if (communityState.commentsState[postId]) communityState.commentsState[postId].replyTo = null;
 
             // Reload comments for this post
-            loadComments(postId);
+            loadComments(postId, true);
         } catch (err) {
             console.error('[Community] Error creating comment:', err);
             showCommunityError('Failed to add comment');
@@ -360,6 +404,15 @@
         }
 
         container.innerHTML = communityState.posts.map(post => createPostHTML(post)).join('');
+        if (communityState.hasMore) {
+            container.innerHTML += `
+                <div style="padding:12px;text-align:center;">
+                    <button class="action-btn secondary" onclick="window.community.loadPostsMore()">
+                        <i class="fa-solid fa-angle-down"></i> Load more posts
+                    </button>
+                </div>
+            `;
+        }
 
         // Setup comment toggles
         setupCommentToggles();
@@ -541,7 +594,7 @@
                     </button>
                     <button class="post-action-btn" onclick="window.community.toggleComments(${post.id})">
                         <i class="fa-regular fa-comment"></i>
-                        <span>Comments</span>
+                        <span>Comments (${Number(post.__commentCount || 0)})</span>
                     </button>
                 </div>
                 <div class="post-comments" id="comments-${post.id}" style="display:none;">
@@ -575,15 +628,49 @@
             return;
         }
 
-        container.innerHTML = comments.map(comment => `
-            <div class="comment">
+        const grouped = {};
+        comments.forEach(comment => {
+            const meta = parseReplyMeta(comment.content);
+            const key = meta.replyTo || 'root';
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push({ ...comment, __cleanContent: meta.cleanContent, __replyTo: meta.replyTo });
+        });
+        const roots = grouped.root || [];
+        container.innerHTML = roots.map(comment => `
+            <div class="comment" oncontextmenu="window.community.setReplyTarget(event, ${postId}, '${comment.id}')">
                 <div class="comment-header">
                     <span class="comment-author" style="cursor:pointer;color:var(--primary);" onclick="window.community.viewUserProfile('${comment.user_id}')" title="View profile">${escapeHtml(comment.profiles?.username || 'Anonymous')}</span>
                     <span class="comment-time">${formatTimeAgo(comment.created_at)}</span>
                 </div>
-                <div class="comment-content">${formatContent(comment.content)}</div>
+                <div class="comment-content">${formatContent(comment.__cleanContent || comment.content)}</div>
+                <div style="display:flex;gap:8px;margin-top:6px;">
+                    <button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.setReplyTarget(event, ${postId}, '${comment.id}')">Reply</button>
+                    ${(communityState.currentUser && String(communityState.currentUser.id) === String(comment.user_id)) ? `<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.deleteComment(${postId}, '${comment.id}')">Delete</button>` : ''}
+                </div>
+                ${(grouped[String(comment.id)] || []).length ? `
+                    <details style="margin-top:6px;">
+                        <summary style="cursor:pointer;font-size:12px;color:var(--text-muted);">Replies (${(grouped[String(comment.id)] || []).length})</summary>
+                        ${(grouped[String(comment.id)] || []).map(reply => `
+                            <div class="comment" style="margin-left:12px;border-left:2px solid var(--border-color);padding-left:10px;" oncontextmenu="window.community.setReplyTarget(event, ${postId}, '${reply.id}')">
+                                <div class="comment-header">
+                                    <span class="comment-author" style="cursor:pointer;color:var(--primary);" onclick="window.community.viewUserProfile('${reply.user_id}')" title="View profile">${escapeHtml(reply.profiles?.username || 'Anonymous')}</span>
+                                    <span class="comment-time">${formatTimeAgo(reply.created_at)}</span>
+                                </div>
+                                <div class="comment-content">${formatContent(reply.__cleanContent || reply.content)}</div>
+                                <div style="display:flex;gap:8px;margin-top:6px;">
+                                    <button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.setReplyTarget(event, ${postId}, '${reply.id}')">Reply</button>
+                                    ${(communityState.currentUser && String(communityState.currentUser.id) === String(reply.user_id)) ? `<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="window.community.deleteComment(${postId}, '${reply.id}')">Delete</button>` : ''}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </details>
+                ` : ''}
             </div>
         `).join('');
+        const state = communityState.commentsState[postId];
+        if (state && state.hasMore) {
+            container.innerHTML += `<div style="padding:8px;text-align:center;"><button class="action-btn secondary" style="font-size:12px;" onclick="window.community.loadMoreComments(${postId})">Load more comments</button></div>`;
+        }
     }
 
     /**
@@ -598,8 +685,76 @@
 
         if (!isVisible) {
             // Load comments when opening
-            loadComments(postId);
+            loadComments(postId, true);
         }
+    }
+
+    async function loadMoreComments(postId) {
+        await loadComments(postId, false);
+    }
+
+    async function deleteComment(postId, commentId) {
+        if (!confirm('Delete this comment?')) return;
+        try {
+            const { error } = await window.supabaseClient
+                .from('comments')
+                .delete()
+                .eq('id', commentId)
+                .eq('user_id', communityState.currentUser?.id);
+            if (error) throw error;
+            await loadComments(postId, true);
+            showCommunitySuccess('Comment deleted');
+        } catch (err) {
+            console.error('[Community] Error deleting comment:', err);
+            showCommunityError('Failed to delete comment');
+        }
+    }
+
+    function setReplyTarget(event, postId, commentId) {
+        if (event) event.preventDefault();
+        if (!communityState.commentsState[postId]) {
+            communityState.commentsState[postId] = { offset: 0, limit: 15, hasMore: true, items: [], replyTo: null };
+        }
+        communityState.commentsState[postId].replyTo = commentId;
+        const input = document.getElementById(`comment-input-${postId}`);
+        if (input) {
+            input.placeholder = `Replying to #${commentId} (right click to switch target)`;
+            input.focus();
+        }
+    }
+
+    function parseReplyMeta(content) {
+        const raw = String(content || '');
+        const m = raw.match(/^\[reply:([a-zA-Z0-9_\-]+)\]\s*/);
+        if (!m) return { replyTo: null, cleanContent: raw };
+        return { replyTo: m[1], cleanContent: raw.replace(/^\[reply:[a-zA-Z0-9_\-]+\]\s*/, '') };
+    }
+
+    function setSort(value) {
+        communityState.sort = String(value || 'newest');
+        loadPosts(true);
+    }
+
+    function openThreadView() {
+        const title = document.getElementById('thread-view-title');
+        const content = document.getElementById('thread-view-content');
+        if (!title || !content) return;
+        title.textContent = 'Community Threads';
+        if (!communityState.posts.length) {
+            content.innerHTML = '<div style="color:var(--text-muted);">No posts available.</div>';
+        } else {
+            content.innerHTML = communityState.posts.map(post => {
+                return `<div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;margin-bottom:10px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                        <strong>${escapeHtml(post.profiles?.username || 'Anonymous')}</strong>
+                        <button class="action-btn secondary" style="padding:4px 8px;font-size:12px;" onclick="window.community.toggleComments(${post.id})">Open Thread</button>
+                    </div>
+                    <div style="margin-top:6px;">${formatContent(String(post.content || '').slice(0, 180))}</div>
+                    <div style="color:var(--text-muted);font-size:12px;margin-top:6px;">Likes: ${(post.likes || []).length} | Comments: ${Number(post.__commentCount || 0)}</div>
+                </div>`;
+            }).join('');
+        }
+        if (window.openModal) window.openModal('thread-view-modal');
     }
 
     /**
@@ -833,6 +988,8 @@
     window.community = {
         init: initCommunity,
         refresh,
+        setSort,
+        openThreadView,
         createPost: () => {
             const input = document.getElementById('community-post-input');
             createPost(input ? input.value : '');
@@ -840,6 +997,9 @@
         deletePost,
         toggleComments,
         toggleLike,
+        loadMoreComments,
+        deleteComment,
+        setReplyTarget,
         createComment: (postId) => {
             const input = document.getElementById(`comment-input-${postId}`);
             if (input) {
@@ -850,6 +1010,7 @@
         removeAttachment,
         cleanup,
         loadPosts,
+        loadPostsMore: () => loadPosts(false),
         viewUserProfile
     };
 

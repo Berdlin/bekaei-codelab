@@ -2930,6 +2930,11 @@ var pendingRollbackDeploymentId = null;
 var currentDeploymentCommentsId = null;
 var currentDeploymentCommentsSlug = null;
 var lastOpenedDeploymentSlug = '';
+var activeDeploySubtab = 'online';
+var deploymentCommentsOffset = 0;
+var deploymentCommentsLimit = 20;
+var deploymentCommentsHasMore = false;
+var deploymentReplyToCommentId = null;
 
 function buildDefaultSlug(name) {
     return String(name || 'project').toLowerCase().replace(/[^a-z0-9\-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
@@ -3071,15 +3076,37 @@ function openDeploymentBrowserFromToolbar() {
     openDeploymentSlug(lastOpenedDeploymentSlug);
 }
 
+function switchDeploySubtab(subtab) {
+    var target = (subtab === 'settings') ? 'settings' : 'online';
+    activeDeploySubtab = target;
+    var buttons = document.querySelectorAll('.deploy-subtab-btn');
+    buttons.forEach(function (btn) {
+        btn.classList.toggle('active', btn.dataset.deploySubtab === target);
+    });
+    var onlinePanel = document.getElementById('deploy-online-subtab');
+    var settingsPanel = document.getElementById('deploy-settings-subtab');
+    if (onlinePanel) onlinePanel.classList.toggle('active', target === 'online');
+    if (settingsPanel) settingsPanel.classList.toggle('active', target === 'settings');
+}
+
 async function loadDeployDashboard() {
     var myGrid = document.getElementById("my-deployments-grid");
     var publicGrid = document.getElementById("public-deployments-grid");
     if (!myGrid || !publicGrid) return;
+    switchDeploySubtab(activeDeploySubtab);
     myGrid.innerHTML = '<div style="color:#666">Loading my deployments...</div>';
     publicGrid.innerHTML = '<div style="color:#666">Loading online projects...</div>';
 
     try {
-        var myProjects = await safeFetch('/api/deployments/mine?uid=' + encodeURIComponent(currentUser.id));
+        var deploySortEl = document.getElementById('deploy-sort-select');
+        var deploySort = deploySortEl ? String(deploySortEl.value || 'newest') : 'newest';
+        var responses = await Promise.all([
+            safeFetch('/api/deployments/mine?uid=' + encodeURIComponent(currentUser.id)),
+            safeFetch('/api/deployments/public?sort=' + encodeURIComponent(deploySort))
+        ]);
+        var myProjects = responses[0] || [];
+        var projects = responses[1] || [];
+
         myGrid.innerHTML = '';
         if (!myProjects || !myProjects.length) {
             myGrid.innerHTML = '<p style="color:#666;width:100%;">No deployments yet.</p>';
@@ -3095,7 +3122,8 @@ async function loadDeployDashboard() {
                     "<p style='margin-top:8px;font-size:12px;color:#64748b;'>Slug: /p/" + escapeHtml(project.slug || '') + "</p>" +
                     "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Version: " + escapeHtml(project.current_version || 1) + " | " + visibility + "</p>" +
                     "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Last deployed: " + escapeHtml(formatDeployDate(project.last_deployed_at)) + "</p>" +
-                    "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>";
+                    "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>" +
+                    "<div class='deployment-engagement' id='deployment-settings-engagement-" + escapeHtml(project.id) + "' style='margin-top:10px;font-size:12px;color:#64748b;'>Loading likes/comments...</div>";
 
                 var actions = document.createElement("div");
                 actions.className = "deployment-actions";
@@ -3124,14 +3152,20 @@ async function loadDeployDashboard() {
                 hideBtn.onclick = function (e) { e.stopPropagation(); setDeploymentStatus(project.id, 'undeployed'); };
                 actions.appendChild(hideBtn);
 
+                var commentsBtn = document.createElement("button");
+                commentsBtn.className = "action-btn secondary deployment-action-btn";
+                commentsBtn.innerHTML = '<i class="fa-regular fa-comments"></i> View Comments';
+                commentsBtn.onclick = function (e) { openDeploymentComments(e, project.id); };
+                actions.appendChild(commentsBtn);
+
                 div.appendChild(actions);
 
                 div.onclick = function () { openDeploymentSlug(project.slug); };
                 myGrid.appendChild(div);
+                loadDeploymentEngagement(project.id, 'deployment-settings-engagement-' + project.id, 'settings');
             });
         }
 
-        var projects = await safeFetch('/api/deployments/public');
         publicGrid.innerHTML = '';
         if (!projects || !projects.length) {
             publicGrid.innerHTML = '<p style="color:#666;width:100%;">No online projects yet.</p>';
@@ -3141,9 +3175,18 @@ async function loadDeployDashboard() {
             var div = document.createElement("div");
             div.className = "project-card online-project-card deployment-card community-post";
             div.dataset.deploymentId = project.id;
+            var ownerProfile = project.owner_profile || null;
+            var ownerAvatar = ownerProfile && ownerProfile.avatar_url ? ownerProfile.avatar_url : '';
+            var ownerInitial = ((ownerProfile && ownerProfile.username) || 'U').charAt(0).toUpperCase();
             div.innerHTML =
-                "<h4><i class='fa-solid fa-globe'></i> " + escapeHtml(project.project_name || project.room_id || 'Untitled') + "</h4>" +
+                "<div style='display:flex;align-items:center;gap:10px;'>" +
+                "<div class='deploy-owner-avatar' title='Click for full owner detail' onclick=\"openUserProfileCard(event,'" + escapeHtml(project.owner_id || '') + "')\">" +
+                (ownerAvatar ? "<img src='" + escapeHtml(ownerAvatar) + "' alt='owner avatar' style='width:34px;height:34px;border-radius:50%;object-fit:cover;' />" : "<span style='width:34px;height:34px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--primary);color:#fff;font-weight:700;'>" + escapeHtml(ownerInitial) + "</span>") +
+                "</div>" +
+                "<h4 style='margin:0;'><i class='fa-solid fa-globe'></i> " + escapeHtml(project.project_name || project.room_id || 'Untitled') + "</h4>" +
+                "</div>" +
                 "<p>" + escapeHtml(project.description || "No description") + "</p>" +
+                "<p class='deployment-owner'><i class='fa-regular fa-user'></i> " + escapeHtml(project.owner_username || project.owner_email || 'Project owner') + "</p>" +
                 "<p style='margin-top:8px;font-size:12px;color:#64748b;'>/" + "p/" + escapeHtml(project.slug || '') + "</p>" +
                 "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Version: " + escapeHtml(project.current_version || 1) + " | Last deployed: " + escapeHtml(formatDeployDate(project.last_deployed_at)) + "</p>" +
                 "<p style='margin-top:4px;font-size:12px;color:#64748b;'>Opens: " + escapeHtml(project.total_opens || 0) + " | Unique: " + escapeHtml(project.unique_opens || 0) + "</p>" +
@@ -3159,6 +3202,11 @@ async function loadDeployDashboard() {
             var actions = document.createElement('div');
             actions.className = 'deployment-actions';
             actions.appendChild(openBtn);
+            var openCommentsBtn = document.createElement("button");
+            openCommentsBtn.className = "action-btn secondary deployment-action-btn";
+            openCommentsBtn.innerHTML = '<i class="fa-regular fa-comment-dots"></i> Comments';
+            openCommentsBtn.onclick = function (e) { openDeploymentComments(e, project.id); };
+            actions.appendChild(openCommentsBtn);
             div.appendChild(actions);
             div.onclick = function () {
                 openDeploymentSlug(project.slug);
@@ -3172,13 +3220,23 @@ async function loadDeployDashboard() {
     }
 }
 
-async function loadDeploymentEngagement(deploymentId) {
-    var el = document.getElementById('deployment-engagement-' + deploymentId);
+async function loadDeploymentEngagement(deploymentId, targetElementId, mode) {
+    var el = targetElementId
+        ? document.getElementById(targetElementId)
+        : document.getElementById('deployment-engagement-' + deploymentId);
     if (!el) return;
     try {
         var uid = currentUser && currentUser.id ? String(currentUser.id) : '';
         var data = await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/engagement?uid=' + encodeURIComponent(uid));
         var liked = !!data.likedByCurrentUser;
+        if (mode === 'settings') {
+            el.innerHTML = '' +
+                '<div class="deployment-setting-stats">' +
+                '<div class="deployment-setting-stat"><div class="stat-label">Likes</div><div class="stat-value">' + escapeHtml(data.likes || 0) + '</div></div>' +
+                '<div class="deployment-setting-stat"><div class="stat-label">Comments</div><div class="stat-value">' + escapeHtml(data.comments || 0) + '</div></div>' +
+                '</div>';
+            return;
+        }
         el.innerHTML = '' +
             '<button class="action-btn secondary" style="padding:6px 10px;font-size:12px;" onclick="toggleDeploymentLike(event,\'' + escapeHtml(deploymentId) + '\')">' +
             (liked ? '<i class="fa-solid fa-heart"></i> Liked' : '<i class="fa-regular fa-heart"></i> Like') +
@@ -3192,6 +3250,13 @@ async function loadDeploymentEngagement(deploymentId) {
     }
 }
 
+async function refreshDeploymentEngagementViews(deploymentId) {
+    await Promise.allSettled([
+        loadDeploymentEngagement(deploymentId),
+        loadDeploymentEngagement(deploymentId, 'deployment-settings-engagement-' + deploymentId, 'settings')
+    ]);
+}
+
 async function toggleDeploymentLike(event, deploymentId) {
     if (event) event.stopPropagation();
     if (!currentUser) return showToast('Please login first', 'error');
@@ -3201,7 +3266,7 @@ async function toggleDeploymentLike(event, deploymentId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: currentUser.id })
         });
-        await loadDeploymentEngagement(deploymentId);
+        await refreshDeploymentEngagementViews(deploymentId);
     } catch (e) {
         showToast('Like action failed', 'error');
     }
@@ -3211,28 +3276,111 @@ async function openDeploymentComments(event, deploymentId) {
     if (event) event.stopPropagation();
     if (!currentUser) return showToast('Please login first', 'error');
     currentDeploymentCommentsId = deploymentId;
+    deploymentCommentsOffset = 0;
+    deploymentReplyToCommentId = null;
     try {
-        var comments = await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/comments');
-        renderDeploymentComments(comments || []);
+        var data = await safeFetch('/api/deployments/' + encodeURIComponent(deploymentId) + '/comments?limit=' + deploymentCommentsLimit + '&offset=0');
+        var comments = data && data.comments ? data.comments : [];
+        deploymentCommentsHasMore = !!(data && data.pagination && data.pagination.hasMore);
+        renderDeploymentComments(comments || [], true);
         openModal('deployment-comments-modal');
     } catch (e) {
         showToast('Comment action failed', 'error');
     }
 }
 
-function renderDeploymentComments(comments) {
+function renderDeploymentComments(comments, reset) {
     var list = document.getElementById('deployment-comments-list');
     if (!list) return;
     if (!comments || !comments.length) {
+        if (!reset) return;
         list.innerHTML = '<div style="color:var(--text-muted);padding:8px;">No comments yet.</div>';
         return;
     }
-    list.innerHTML = comments.map(function (c) {
-        return '<div style="border-bottom:1px solid var(--border-color);padding:8px 4px;">' +
+    var grouped = {};
+    (comments || []).forEach(function (c) {
+        var key = c.reply_to_comment_id ? String(c.reply_to_comment_id) : 'root';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(c);
+    });
+    var roots = grouped.root || [];
+    var html = roots.map(function (c) {
+        var replies = grouped[String(c.id)] || [];
+        return '<div style="border-bottom:1px solid var(--border-color);padding:8px 4px;" oncontextmenu="setDeploymentReplyTarget(\'' + escapeHtml(c.id) + '\');return false;">' +
             '<div style="font-weight:600;font-size:12px;">' + escapeHtml(c.username || 'User') + ' <span style="color:var(--text-muted);font-weight:400;">' + escapeHtml(formatDeployDate(c.created_at)) + '</span></div>' +
             '<div style="font-size:13px;margin-top:4px;">' + escapeHtml(c.comment || '') + '</div>' +
+            '<div style="display:flex;gap:8px;margin-top:6px;">' +
+            '<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="setDeploymentReplyTarget(\'' + escapeHtml(c.id) + '\')">Reply</button>' +
+            '<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="deleteDeploymentComment(\'' + escapeHtml(c.id) + '\',\'' + escapeHtml(c.user_id || '') + '\')">Delete</button>' +
+            '</div>' +
+            (replies.length ? '<details style="margin-top:6px;"><summary style="cursor:pointer;color:var(--text-muted);font-size:12px;">Replies (' + replies.length + ')</summary>' +
+                replies.map(function (r) {
+                    return '<div style="margin-top:6px;margin-left:14px;padding-left:10px;border-left:2px solid var(--border-color);" oncontextmenu="setDeploymentReplyTarget(\'' + escapeHtml(r.id) + '\');return false;">' +
+                        '<div style="font-weight:600;font-size:12px;">' + escapeHtml(r.username || 'User') + ' <span style="color:var(--text-muted);font-weight:400;">' + escapeHtml(formatDeployDate(r.created_at)) + '</span></div>' +
+                        '<div style="font-size:13px;margin-top:4px;">' + escapeHtml(r.comment || '') + '</div>' +
+                        '<div style="display:flex;gap:8px;margin-top:6px;">' +
+                        '<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="setDeploymentReplyTarget(\'' + escapeHtml(r.id) + '\')">Reply</button>' +
+                        '<button class="action-btn secondary" style="padding:4px 8px;font-size:11px;" onclick="deleteDeploymentComment(\'' + escapeHtml(r.id) + '\',\'' + escapeHtml(r.user_id || '') + '\')">Delete</button>' +
+                        '</div>' +
+                        '</div>';
+                }).join('') +
+                '</details>' : '') +
             '</div>';
     }).join('');
+    if (reset) list.innerHTML = html;
+    else list.innerHTML += html;
+    if (deploymentCommentsHasMore) {
+        list.innerHTML += '<div style="padding:8px;text-align:center;"><button class="action-btn secondary" style="font-size:12px;" onclick="loadMoreDeploymentComments()">Load more comments</button></div>';
+    }
+}
+
+function setDeploymentReplyTarget(commentId) {
+    deploymentReplyToCommentId = commentId ? String(commentId) : null;
+    var input = document.getElementById('deployment-comment-input');
+    if (input) {
+        input.placeholder = deploymentReplyToCommentId ? ('Replying to comment #' + deploymentReplyToCommentId + ' (right click any comment in thread to reply quickly)') : 'Write a comment...';
+        try { input.focus(); } catch (e) { }
+    }
+}
+
+async function loadMoreDeploymentComments() {
+    if (!currentDeploymentCommentsId || !deploymentCommentsHasMore) return;
+    deploymentCommentsOffset += deploymentCommentsLimit;
+    try {
+        var data = await safeFetch('/api/deployments/' + encodeURIComponent(currentDeploymentCommentsId) + '/comments?limit=' + deploymentCommentsLimit + '&offset=' + deploymentCommentsOffset);
+        var comments = data && data.comments ? data.comments : [];
+        deploymentCommentsHasMore = !!(data && data.pagination && data.pagination.hasMore);
+        var list = document.getElementById('deployment-comments-list');
+        if (list) {
+            list.querySelectorAll('button').forEach(function (btn) {
+                if (String(btn.textContent || '').toLowerCase().indexOf('load more comments') >= 0) {
+                    btn.parentElement.remove();
+                }
+            });
+        }
+        renderDeploymentComments(comments || [], false);
+    } catch (e) {
+        showToast('Failed to load more comments', 'error');
+    }
+}
+
+async function deleteDeploymentComment(commentId, commentOwnerId) {
+    if (!currentUser || !commentId) return;
+    if (String(commentOwnerId || '') !== String(currentUser.id || '')) {
+        if (!confirm('Delete this comment as deployment owner/moderator?')) return;
+    } else if (!confirm('Delete this comment?')) return;
+    try {
+        await safeFetch('/api/deployments/' + encodeURIComponent(currentDeploymentCommentsId) + '/comments/' + encodeURIComponent(commentId) + '?userId=' + encodeURIComponent(currentUser.id), {
+            method: 'DELETE'
+        });
+        deploymentCommentsOffset = 0;
+        var data = await safeFetch('/api/deployments/' + encodeURIComponent(currentDeploymentCommentsId) + '/comments?limit=' + deploymentCommentsLimit + '&offset=0');
+        deploymentCommentsHasMore = !!(data && data.pagination && data.pagination.hasMore);
+        renderDeploymentComments((data && data.comments) || [], true);
+        await refreshDeploymentEngagementViews(currentDeploymentCommentsId);
+    } catch (e) {
+        showToast('Failed to delete comment', 'error');
+    }
 }
 
 async function submitDeploymentComment() {
@@ -3247,15 +3395,68 @@ async function submitDeploymentComment() {
             body: JSON.stringify({
                 userId: currentUser.id,
                 username: currentUser.username || currentUser.email || 'User',
-                comment: text
+                comment: text,
+                replyToCommentId: deploymentReplyToCommentId
             })
         });
         if (input) input.value = '';
-        var comments = await safeFetch('/api/deployments/' + encodeURIComponent(currentDeploymentCommentsId) + '/comments');
-        renderDeploymentComments(comments || []);
-        await loadDeploymentEngagement(currentDeploymentCommentsId);
+        deploymentReplyToCommentId = null;
+        setDeploymentReplyTarget(null);
+        deploymentCommentsOffset = 0;
+        var commentsData = await safeFetch('/api/deployments/' + encodeURIComponent(currentDeploymentCommentsId) + '/comments?limit=' + deploymentCommentsLimit + '&offset=0');
+        deploymentCommentsHasMore = !!(commentsData && commentsData.pagination && commentsData.pagination.hasMore);
+        renderDeploymentComments((commentsData && commentsData.comments) || [], true);
+        await refreshDeploymentEngagementViews(currentDeploymentCommentsId);
     } catch (e) {
         showToast('Comment action failed', 'error');
+    }
+}
+
+async function openUserProfileCard(event, userId) {
+    if (event) event.stopPropagation();
+    if (!userId) return;
+    try {
+        var data = await safeFetch('/api/user/profile?userId=' + encodeURIComponent(userId));
+        var content = document.getElementById('thread-view-content');
+        var title = document.getElementById('thread-view-title');
+        if (!content || !title) return;
+        title.textContent = 'User Profile';
+        var avatar = data.avatar_url
+            ? "<img src='" + escapeHtml(data.avatar_url) + "' alt='avatar' style='width:72px;height:72px;border-radius:50%;object-fit:cover;' />"
+            : "<div style='width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--primary);color:#fff;font-weight:700;font-size:28px;'>" + escapeHtml((data.username || 'U').charAt(0).toUpperCase()) + "</div>";
+        content.innerHTML = "<div style='display:flex;align-items:center;gap:12px;'>" + avatar +
+            "<div><div><strong>" + escapeHtml(data.username || 'Unknown') + "</strong></div>" +
+            "<div style='color:var(--text-muted);font-size:13px;'>" + escapeHtml(data.email || '') + "</div>" +
+            "<div style='color:var(--text-muted);font-size:12px;'>User ID: " + escapeHtml(data.id || '') + "</div></div></div>";
+        openModal('thread-view-modal');
+    } catch (e) {
+        showToast('Could not load user profile', 'error');
+    }
+}
+
+async function openDeploymentThreadView() {
+    try {
+        var data = await safeFetch('/api/deployments/public?sort=' + encodeURIComponent((document.getElementById('deploy-sort-select') || {}).value || 'newest') + '&limit=50&offset=0');
+        var title = document.getElementById('thread-view-title');
+        var content = document.getElementById('thread-view-content');
+        if (!title || !content) return;
+        title.textContent = 'Deployment Community Threads';
+        if (!data || !data.length) {
+            content.innerHTML = '<div style="color:var(--text-muted);">No deployments yet.</div>';
+            return openModal('thread-view-modal');
+        }
+        content.innerHTML = data.map(function (d) {
+            return "<div style='padding:10px;border:1px solid var(--border-color);border-radius:10px;margin-bottom:10px;'>" +
+                "<div style='display:flex;align-items:center;justify-content:space-between;gap:8px;'>" +
+                "<strong>" + escapeHtml(d.project_name || d.room_id || 'Untitled') + "</strong>" +
+                "<button class='action-btn secondary' style='font-size:12px;padding:4px 8px;' onclick=\"openDeploymentComments(event,'" + escapeHtml(d.id) + "')\">Open Comments</button>" +
+                "</div>" +
+                "<div style='color:var(--text-muted);font-size:12px;margin-top:6px;'>Likes: " + escapeHtml(d.likes_count || 0) + " | Comments: " + escapeHtml(d.comments_count || 0) + "</div>" +
+                "</div>";
+        }).join('');
+        openModal('thread-view-modal');
+    } catch (e) {
+        showToast('Failed to load deployment thread view', 'error');
     }
 }
 
@@ -5582,11 +5783,11 @@ async function implementWithAIThinking(message, model, userApiKey, provider) {
         continueDiv.id = "ai-thinking-continue";
         continueDiv.style.cssText = "margin:12px 0;padding:12px;background:rgba(34,197,94,0.1);border-radius:8px;text-align:center;";
         continueDiv.innerHTML = 
-            '<div style="color:#64748b;font-size:12px;margin-bottom:8px;">Analysis complete. Ready to generate code?</div>' +
+            '<div style="color:#64748b;font-size:12px;margin-bottom:8px;">Analysis complete. Choose what to do next:</div>' +
             '<button onclick="continueThinkingImplementation()" class="action-btn" style="margin-right:8px;">' +
-            '<i class="fa-solid fa-code"></i> Generate Code</button>' +
-            '<button onclick="chatWithAIAboutThinking()" class="action-btn secondary">' +
-            '<i class="fa-solid fa-comments"></i> Discuss</button>';
+            '<i class="fa-solid fa-wand-magic-sparkles"></i> Implement</button>' +
+            '<button onclick="generateThinkingCodeExplanation()" class="action-btn secondary">' +
+            '<i class="fa-solid fa-code"></i> Code</button>';
         chatArea.appendChild(continueDiv);
         chatArea.scrollTop = chatArea.scrollHeight;
     }
@@ -5599,6 +5800,20 @@ async function implementWithAIThinking(message, model, userApiKey, provider) {
         provider: provider,
         analysis: analysisResponse
     };
+}
+
+async function generateThinkingCodeExplanation() {
+    var context = window.thinkingContext;
+    if (!context) return showToast("No pending prompt", "warning");
+    var continueDiv = document.getElementById("ai-thinking-continue");
+    if (continueDiv) continueDiv.remove();
+    var prompt = "Based on this analysis:\n" + context.analysis + "\n\n" +
+        "For this request:\n" + context.message + "\n\n" +
+        "Return:\n1) concise explanation\n2) complete code blocks with filenames. " +
+        "Do not say you implemented files.";
+    var response = await AIAssistant.callAPIThinking(prompt, context.model, context.userApiKey, context.provider);
+    AIAssistant.addMessage("assistant", "### Code + Explanation\n\n" + response);
+    window.thinkingContext = null;
 }
 
 async function continueThinkingImplementation() {
@@ -6533,11 +6748,11 @@ async function implementWithAI(message, model, userApiKey, provider) {
         continueDiv.id = "ai-continue-prompt";
         continueDiv.style.cssText = "margin:12px 0;padding:12px;background:rgba(99,102,241,0.1);border-radius:8px;text-align:center;";
         continueDiv.innerHTML = 
-            '<div style="color:#64748b;font-size:12px;margin-bottom:8px;">Analysis complete. Ready to implement?</div>' +
+            '<div style="color:#64748b;font-size:12px;margin-bottom:8px;">Analysis complete. Choose what to do next:</div>' +
             '<button onclick="continueAutoActImplementation()" class="action-btn" style="margin-right:8px;">' +
-            '<i class="fa-solid fa-play"></i> Implement Now</button>' +
-            '<button onclick="chatWithAIAboutImplementation()" class="action-btn secondary">' +
-            '<i class="fa-solid fa-comments"></i> Discuss First</button>';
+            '<i class="fa-solid fa-wand-magic-sparkles"></i> Implement</button>' +
+            '<button onclick="generateAutoActCodeExplanation()" class="action-btn secondary">' +
+            '<i class="fa-solid fa-code"></i> Code</button>';
         chatArea.appendChild(continueDiv);
         chatArea.scrollTop = chatArea.scrollHeight;
     }
@@ -6550,6 +6765,21 @@ async function implementWithAI(message, model, userApiKey, provider) {
         provider: provider,
         analysis: analysisResponse
     };
+}
+
+async function generateAutoActCodeExplanation() {
+    var context = window.autoActContext;
+    if (!context) return showToast("No pending prompt", "warning");
+    var continuePrompt = document.getElementById("ai-continue-prompt");
+    if (continuePrompt) continuePrompt.remove();
+    var prompt =
+        "Based on this analysis:\n" + context.analysis + "\n\n" +
+        "Request:\n" + context.message + "\n\n" +
+        "Return a concise explanation and complete code blocks with filenames. " +
+        "Do not apply files automatically.";
+    var response = await AIAssistant.callAPI(context.model, prompt, context.userApiKey, context.provider);
+    AIAssistant.addMessage("assistant", "### Code + Explanation\n\n" + response);
+    window.autoActContext = null;
 }
 
 async function continueAutoActImplementation() {
